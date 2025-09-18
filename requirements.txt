@@ -3,3 +3,5 @@ imutils
 cmake
 face-recognition
 picamera2
+gpiozero
+numpy

@@ -8,6 +8,8 @@ from gpiozero import LED
 
 # Configuration
 DISTANCE_THRESHOLD = 0.4  # Lower = more strict, Higher = more lenient (0.3-0.6 recommended)
+MOTION_THRESHOLD = 5000  # Motion detection sensitivity (higher = less sensitive)
+MOTION_AREA_THRESHOLD = 1000  # Minimum area for motion detection
 
 # Load pre-trained face encodings
 print("[INFO] loading encodings...")
@@ -34,8 +36,77 @@ frame_count = 0
 start_time = time.time()
 fps = 0
 
+# Motion detection variables
+background_subtractor = cv2.createBackgroundSubtractorMOG2(detectShadows=True)
+motion_detected = False
+bell_icon_alpha = 0.0
+bell_fade_speed = 0.05
+
 # List of names that will trigger the GPIO pin
 authorized_names = ["trix"]  # Replace with names you wish to authorise THIS IS CASE-SENSITIVE
+
+def detect_motion(frame):
+    global motion_detected, bell_icon_alpha
+    
+    # Apply background subtraction
+    fg_mask = background_subtractor.apply(frame)
+    
+    # Remove noise
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
+    fg_mask = cv2.morphologyEx(fg_mask, cv2.MORPH_OPEN, kernel)
+    
+    # Find contours
+    contours, _ = cv2.findContours(fg_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    
+    # Check for significant motion
+    motion_detected = False
+    for contour in contours:
+        area = cv2.contourArea(contour)
+        if area > MOTION_AREA_THRESHOLD:
+            motion_detected = True
+            break
+    
+    # Update bell icon alpha
+    if motion_detected:
+        bell_icon_alpha = min(1.0, bell_icon_alpha + bell_fade_speed)
+    else:
+        bell_icon_alpha = max(0.0, bell_icon_alpha - bell_fade_speed)
+    
+    return motion_detected
+
+def draw_bell_icon(frame):
+    global bell_icon_alpha
+    
+    if bell_icon_alpha > 0:
+        # Bell icon position (upper right corner)
+        icon_size = 40
+        icon_x = frame.shape[1] - icon_size - 20
+        icon_y = 20
+        
+        # Create bell icon (simple circle with line)
+        overlay = frame.copy()
+        
+        # Bell body (circle)
+        cv2.circle(overlay, (icon_x + icon_size//2, icon_y + icon_size//2), 
+                  icon_size//2 - 2, (0, 255, 255), -1)  # Yellow bell
+        cv2.circle(overlay, (icon_x + icon_size//2, icon_y + icon_size//2), 
+                  icon_size//2 - 2, (0, 0, 0), 2)  # Black border
+        
+        # Bell clapper (small circle)
+        cv2.circle(overlay, (icon_x + icon_size//2, icon_y + icon_size//2 + 5), 
+                  3, (0, 0, 0), -1)
+        
+        # Bell handle (line)
+        cv2.line(overlay, (icon_x + icon_size//2, icon_y + 2), 
+                (icon_x + icon_size//2, icon_y + icon_size//2 - 8), (0, 0, 0), 2)
+        
+        # Apply alpha blending
+        cv2.addWeighted(overlay, bell_icon_alpha, frame, 1 - bell_icon_alpha, 0, frame)
+        
+        # Add "MOTION" text
+        if motion_detected:
+            cv2.putText(frame, "MOTION", (icon_x - 10, icon_y + icon_size + 20), 
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
 
 def process_frame(frame):
     global face_locations, face_encodings, face_names
@@ -133,11 +204,17 @@ while True:
     # Capture a frame from camera
     frame = picam2.capture_array()
     
+    # Detect motion in the frame
+    detect_motion(frame)
+    
     # Process the frame with the function
     processed_frame = process_frame(frame)
     
     # Get the text and boxes to be drawn based on the processed frame
     display_frame = draw_results(processed_frame)
+    
+    # Draw bell icon if motion is detected
+    draw_bell_icon(display_frame)
     
     # Calculate and update FPS
     current_fps = calculate_fps()
