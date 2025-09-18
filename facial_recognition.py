@@ -21,7 +21,7 @@ picam2.configure(picam2.create_preview_configuration(main={"format": 'XRGB8888',
 picam2.start()
 
 # Initialize our variables
-cv_scaler = 4 # this has to be a whole number
+cv_scaler = 10 # this has to be a whole number
 
 face_locations = []
 face_encodings = []
