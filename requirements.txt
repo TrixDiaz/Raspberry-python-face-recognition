@@ -5,3 +5,7 @@ face-recognition
 picamera2
 gpiozero
 numpy
+firebase-admin
+flask
+flask-cors
+requests
