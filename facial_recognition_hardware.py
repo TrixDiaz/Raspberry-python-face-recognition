@@ -6,6 +6,9 @@ import time
 import pickle
 from gpiozero import LED
 
+# Configuration
+DISTANCE_THRESHOLD = 0.4  # Lower = more strict, Higher = more lenient (0.3-0.6 recommended)
+
 # Load pre-trained face encodings
 print("[INFO] loading encodings...")
 with open("encodings.pickle", "rb") as f:
@@ -32,7 +35,7 @@ start_time = time.time()
 fps = 0
 
 # List of names that will trigger the GPIO pin
-authorized_names = ["john", "alice", "bob"]  # Replace with names you wish to authorise THIS IS CASE-SENSITIVE
+authorized_names = ["trix"]  # Replace with names you wish to authorise THIS IS CASE-SENSITIVE
 
 def process_frame(frame):
     global face_locations, face_encodings, face_names
@@ -51,18 +54,25 @@ def process_frame(frame):
     authorized_face_detected = False
     
     for face_encoding in face_encodings:
-        # See if the face is a match for the known face(s)
-        matches = face_recognition.compare_faces(known_face_encodings, face_encoding)
-        name = "Unknown"
-        
-        # Use the known face with the smallest distance to the new face
+        # Calculate face distances to all known faces
         face_distances = face_recognition.face_distance(known_face_encodings, face_encoding)
+        
+        # Use the configured distance threshold
+        distance_threshold = DISTANCE_THRESHOLD
+        
+        # Find the best match (smallest distance)
         best_match_index = np.argmin(face_distances)
-        if matches[best_match_index]:
+        best_distance = face_distances[best_match_index]
+        
+        # Only assign a name if the distance is below the threshold
+        if best_distance <= distance_threshold:
             name = known_face_names[best_match_index]
             # Check if the detected face is in our authorized list
             if name in authorized_names:
                 authorized_face_detected = True
+        else:
+            name = "Unknown"
+        
         face_names.append(name)
     
     # Control the GPIO pin based on face detection
@@ -82,17 +92,30 @@ def draw_results(frame):
         bottom *= cv_scaler
         left *= cv_scaler
         
+        # Choose color based on recognition status
+        if name == "Unknown":
+            box_color = (0, 0, 255)  # Red for unknown
+            text_color = (255, 255, 255)  # White text
+        elif name in authorized_names:
+            box_color = (0, 255, 0)  # Green for authorized
+            text_color = (0, 0, 0)  # Black text
+        else:
+            box_color = (0, 165, 255)  # Orange for known but not authorized
+            text_color = (255, 255, 255)  # White text
+        
         # Draw a box around the face
-        cv2.rectangle(frame, (left, top), (right, bottom), (244, 42, 3), 3)
+        cv2.rectangle(frame, (left, top), (right, bottom), box_color, 3)
         
         # Draw a label with a name below the face
-        cv2.rectangle(frame, (left -3, top - 35), (right+3, top), (244, 42, 3), cv2.FILLED)
+        cv2.rectangle(frame, (left -3, top - 35), (right+3, top), box_color, cv2.FILLED)
         font = cv2.FONT_HERSHEY_DUPLEX
-        cv2.putText(frame, name, (left + 6, top - 6), font, 1.0, (255, 255, 255), 1)
+        cv2.putText(frame, name, (left + 6, top - 6), font, 1.0, text_color, 1)
         
         # Add an indicator if the person is authorized
         if name in authorized_names:
             cv2.putText(frame, "Authorized", (left + 6, bottom + 23), font, 0.6, (0, 255, 0), 1)
+        elif name != "Unknown":
+            cv2.putText(frame, "Not Authorized", (left + 6, bottom + 23), font, 0.6, (0, 165, 255), 1)
     
     return frame
 
