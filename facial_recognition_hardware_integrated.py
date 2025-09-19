@@ -8,7 +8,6 @@ import requests
 import json
 from datetime import datetime
 import logging
-from gpiozero import LED
 from firebase_service import get_firebase_service
 
 # Configure logging
@@ -17,8 +16,8 @@ logger = logging.getLogger(__name__)
 
 # Configuration
 DISTANCE_THRESHOLD = 0.4  # Lower = more strict, Higher = more lenient (0.3-0.6 recommended)
-MOTION_THRESHOLD = 3000  # Motion detection sensitivity - MEDIUM (higher = less sensitive)
-MOTION_AREA_THRESHOLD = 1000  # Minimum area for motion detection
+MOTION_THRESHOLD = 5000  # Motion detection sensitivity - LOW (higher = less sensitive)
+MOTION_AREA_THRESHOLD = 2000  # Minimum area for motion detection
 
 # API Configuration
 API_BASE_URL = "http://localhost:5000"  # Change this to your Flask server URL
@@ -37,8 +36,6 @@ picam2 = Picamera2()
 picam2.configure(picam2.create_preview_configuration(main={"format": 'XRGB8888', "size": (1920, 1080)}))
 picam2.start()
 
-# Initialize GPIO
-output = LED(14)
 
 # Initialize Firebase service
 firebase_service = None
@@ -64,8 +61,6 @@ motion_detected = False
 bell_icon_alpha = 0.0
 bell_fade_speed = 0.05
 
-# List of names that will trigger the GPIO pin
-authorized_names = ["trix"]  # Replace with names you wish to authorise THIS IS CASE-SENSITIVE
 
 # Cooldown tracking
 last_motion_report = 0
@@ -241,7 +236,6 @@ def process_frame(frame):
     face_encodings = face_recognition.face_encodings(rgb_resized_frame, face_locations, model='large')
     
     face_names = []
-    authorized_face_detected = False
     
     for i, face_encoding in enumerate(face_encodings):
         # Calculate face distances to all known faces
@@ -269,9 +263,6 @@ def process_frame(frame):
         # Only assign a name if the distance is below the threshold
         if best_distance <= distance_threshold:
             name = known_face_names[best_match_index]
-            # Check if the detected face is in our authorized list
-            if name in authorized_names:
-                authorized_face_detected = True
             
             # Store known face in Firebase
             if face_image.size > 0:
@@ -284,12 +275,6 @@ def process_frame(frame):
                 send_unknown_face(face_image)
         
         face_names.append(name)
-    
-    # Control the GPIO pin based on face detection
-    if authorized_face_detected:
-        output.on()  # Turn on Pin
-    else:
-        output.off()  # Turn off Pin
     
     return frame
 
@@ -306,12 +291,9 @@ def draw_results(frame):
         if name == "Unknown":
             box_color = (0, 0, 255)  # Red for unknown
             text_color = (255, 255, 255)  # White text
-        elif name in authorized_names:
-            box_color = (0, 255, 0)  # Green for authorized
-            text_color = (0, 0, 0)  # Black text
         else:
-            box_color = (0, 165, 255)  # Orange for known but not authorized
-            text_color = (255, 255, 255)  # White text
+            box_color = (0, 255, 0)  # Green for known
+            text_color = (0, 0, 0)  # Black text
         
         # Draw a box around the face
         cv2.rectangle(frame, (left, top), (right, bottom), box_color, 3)
@@ -320,12 +302,6 @@ def draw_results(frame):
         cv2.rectangle(frame, (left -3, top - 35), (right+3, top), box_color, cv2.FILLED)
         font = cv2.FONT_HERSHEY_DUPLEX
         cv2.putText(frame, name, (left + 6, top - 6), font, 1.0, text_color, 1)
-        
-        # Add an indicator if the person is authorized
-        if name in authorized_names:
-            cv2.putText(frame, "Authorized", (left + 6, bottom + 23), font, 0.6, (0, 255, 0), 1)
-        elif name != "Unknown":
-            cv2.putText(frame, "Not Authorized", (left + 6, bottom + 23), font, 0.6, (0, 165, 255), 1)
     
     return frame
 
@@ -348,10 +324,9 @@ def check_api_health():
         return False
 
 # Main loop
-print("[INFO] Starting face recognition with API integration and GPIO control...")
+print("[INFO] Starting face recognition with Firebase integration...")
 print(f"[INFO] API Base URL: {API_BASE_URL}")
 print(f"[INFO] Firebase service: {'Available' if firebase_service else 'Not available'}")
-print(f"[INFO] Authorized names: {authorized_names}")
 
 while True:
     # Capture a frame from camera
@@ -386,11 +361,6 @@ while True:
     cv2.putText(display_frame, firebase_status, (10, 60), 
                 cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0) if firebase_service else (0, 0, 255), 2)
     
-    # Add GPIO status indicator
-    gpio_status = "GPIO: ON" if output.is_lit else "GPIO: OFF"
-    cv2.putText(display_frame, gpio_status, (10, 90), 
-                cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0) if output.is_lit else (0, 0, 255), 2)
-    
     # Display everything over the video feed.
     cv2.imshow('Video', display_frame)
     
@@ -401,5 +371,4 @@ while True:
 # By breaking the loop we run this code here which closes everything
 cv2.destroyAllWindows()
 picam2.stop()
-output.off()  # Make sure to turn off the GPIO pin when exiting
 print("[INFO] Face recognition stopped.")
