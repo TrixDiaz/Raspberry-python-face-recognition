@@ -16,14 +16,49 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Configuration
-DISTANCE_THRESHOLD = 0.4  # Lower = more strict, Higher = more lenient (0.3-0.6 recommended)
+DISTANCE_THRESHOLD_LEVEL = 5  # 1-10 scale: 1=slow/accurate, 10=fast/lenient
 MOTION_THRESHOLD = 10000  # Motion detection sensitivity - LOW (higher = less sensitive)
 MOTION_AREA_THRESHOLD = 10  # Minimum area for motion detection (FAST MODE)
+
+# Convert threshold level to actual distance threshold
+# Level 1 = 0.2 (very strict), Level 10 = 0.8 (very lenient)
+DISTANCE_THRESHOLD = 0.2 + (DISTANCE_THRESHOLD_LEVEL - 1) * 0.067  # Maps 1-10 to 0.2-0.8
+
+def set_distance_threshold_level(level):
+    """
+    Set the distance threshold level (1-10).
+    
+    Args:
+        level (int): Threshold level from 1 to 10
+                   1 = slow but more accurate (strict matching)
+                   10 = fast but less accurate (lenient matching)
+    """
+    global DISTANCE_THRESHOLD_LEVEL, DISTANCE_THRESHOLD
+    
+    if 1 <= level <= 10:
+        DISTANCE_THRESHOLD_LEVEL = level
+        DISTANCE_THRESHOLD = 0.2 + (level - 1) * 0.067
+        logger.info(f"Distance threshold set to level {level} (actual threshold: {DISTANCE_THRESHOLD:.3f})")
+    else:
+        logger.error(f"Invalid threshold level {level}. Must be between 1 and 10.")
+
+def get_threshold_info():
+    """Get current threshold information."""
+    return {
+        "level": DISTANCE_THRESHOLD_LEVEL,
+        "actual_threshold": DISTANCE_THRESHOLD,
+        "description": f"Level {DISTANCE_THRESHOLD_LEVEL}: {'Strict' if DISTANCE_THRESHOLD_LEVEL <= 3 else 'Moderate' if DISTANCE_THRESHOLD_LEVEL <= 7 else 'Lenient'}"
+    }
 
 # API Configuration
 API_BASE_URL = "http://localhost:5000"  # Change this to your Flask server URL
 MOTION_COOLDOWN = 10  # Seconds between motion detection reports
 UNKNOWN_FACE_COOLDOWN = 10  # Seconds between unknown face reports
+KNOWN_FACE_COOLDOWN = 10  # Seconds between known face reports
+
+# Performance optimization settings
+FACE_DETECTION_INTERVAL = 3  # Process face detection every N frames (3 = every 3rd frame)
+FRAME_SKIP_COUNT = 0  # Counter for frame skipping
 
 # Load pre-trained face encodings
 print("[INFO] loading encodings...")
@@ -71,6 +106,7 @@ bell_fade_speed = 0.05
 # Cooldown tracking
 last_motion_report = 0
 last_unknown_face_report = 0
+last_known_face_report = {}  # Dictionary to track cooldown per person
 
 def send_motion_detection():
     """Send motion detection to FastAPI backend."""
@@ -138,7 +174,16 @@ def send_unknown_face(face_image):
         logger.error(f"Error saving unknown face: {str(e)}")
 
 def send_known_face(face_image, name, confidence):
-    """Send known face detection to Firebase."""
+    """Send known face detection to Firebase with cooldown."""
+    global last_known_face_report
+    
+    current_time = time.time()
+    
+    # Check cooldown for this specific person
+    if name in last_known_face_report:
+        if current_time - last_known_face_report[name] < KNOWN_FACE_COOLDOWN:
+            return
+    
     try:
         # Encode face image to base64
         face_image_base64 = firebase_service.encode_image_to_base64(face_image)
@@ -157,6 +202,7 @@ def send_known_face(face_image, name, confidence):
         
         if success:
             logger.info(f"Known face ({name}) saved to Firebase successfully")
+            last_known_face_report[name] = current_time
         else:
             logger.warning(f"Failed to save known face ({name}) to Firebase")
             
@@ -247,7 +293,15 @@ def draw_bell_icon(frame):
                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
 
 def process_frame(frame):
-    global face_locations, face_encodings, face_names, last_unknown_face_time
+    global face_locations, face_encodings, face_names, FRAME_SKIP_COUNT
+    
+    # Skip face detection on some frames for performance
+    FRAME_SKIP_COUNT += 1
+    if FRAME_SKIP_COUNT < FACE_DETECTION_INTERVAL:
+        # Return frame with previous face locations for display
+        return frame
+    
+    FRAME_SKIP_COUNT = 0  # Reset counter
     
     # Resize the frame using cv_scaler to increase performance (less pixels processed, less time spent)
     resized_frame = cv2.resize(frame, (0, 0), fx=(1/cv_scaler), fy=(1/cv_scaler))
@@ -255,62 +309,11 @@ def process_frame(frame):
     # Convert the image from BGR to RGB colour space, the facial recognition library uses RGB, OpenCV uses BGR
     rgb_resized_frame = cv2.cvtColor(resized_frame, cv2.COLOR_BGR2RGB)
     
-    current_time = time.time()
-    
     # Find all the faces and face encodings in the current frame of video
     try:
-        face_locations = face_recognition.face_locations(rgb_resized_frame)
+        face_locations = face_recognition.face_locations(rgb_resized_frame, model='hog')  # Use faster HOG model
         if face_locations:
-            face_encodings = face_recognition.face_encodings(rgb_resized_frame, face_locations, model='large')
-            
-            # Process each detected face
-            for i, (face_encoding, face_location) in enumerate(zip(face_encodings, face_locations)):
-                # Extract face image
-                top, right, bottom, left = face_location
-                face_image = frame[top*cv_scaler:bottom*cv_scaler, left*cv_scaler:right*cv_scaler]
-                
-                # Convert face image to base64
-                try:
-                    face_base64 = encode_image_to_base64(face_image)
-                except Exception as e:
-                    logger.error(f"Error encoding face image: {str(e)}")
-                    continue
-                
-                # Calculate face distances to all known faces
-                face_distances = face_recognition.face_distance(known_face_encodings, face_encoding)
-                
-                if len(face_distances) > 0:
-                    best_match_index = np.argmin(face_distances)
-                    best_distance = face_distances[best_match_index]
-                    
-                    if best_distance < DISTANCE_THRESHOLD:
-                        name = known_face_names[best_match_index]
-                        # Save known face detection
-                        if firebase_service:
-                            try:
-                                firebase_service.save_known_face(
-                                    face_base64,
-                                    name=name,
-                                    timestamp=datetime.now(),
-                                    location="camera_1",
-                                    confidence=1.0 - best_distance
-                                )
-                            except Exception as e:
-                                logger.error(f"Error saving known face: {str(e)}")
-                    else:
-                        # Unknown face detected
-                        if current_time - last_unknown_face_time >= UNKNOWN_FACE_COOLDOWN:
-                            if firebase_service:
-                                try:
-                                    firebase_service.save_unknown_face(
-                                        face_base64,
-                                        timestamp=datetime.now(),
-                                        location="camera_1",
-                                        confidence=1.0 - best_distance
-                                    )
-                                    last_unknown_face_time = current_time
-                                except Exception as e:
-                                    logger.error(f"Error saving unknown face: {str(e)}")
+            face_encodings = face_recognition.face_encodings(rgb_resized_frame, face_locations, model='small')  # Use smaller model
         else:
             face_encodings = []
     except Exception as e:
@@ -367,8 +370,6 @@ def process_frame(frame):
                 send_unknown_face(face_image)
                 
         face_names.append(name)
-        
-        face_names.append(name)
     
     return frame
 
@@ -422,6 +423,11 @@ print("[INFO] Starting face recognition with Firebase integration...")
 print(f"[INFO] API Base URL: {API_BASE_URL}")
 print(f"[INFO] Firebase service: {'Available' if firebase_service and firebase_service.db else 'Not available'}")
 
+# Display threshold information
+threshold_info = get_threshold_info()
+print(f"[INFO] Distance Threshold: {threshold_info['description']} (Level {threshold_info['level']}, Actual: {threshold_info['actual_threshold']:.3f})")
+print("[INFO] Threshold Guide: 1=Strict/Slow, 5=Moderate, 10=Lenient/Fast")
+
 while True:
     # Capture a frame from camera
     frame = picam2.capture_array()
@@ -456,12 +462,32 @@ while True:
     cv2.putText(display_frame, firebase_status, (10, 60), 
                 cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0) if firebase_connected else (0, 0, 255), 2)
     
+    # Add threshold level indicator
+    threshold_info = get_threshold_info()
+    threshold_text = f"Threshold: {threshold_info['level']} ({threshold_info['description'].split(': ')[1]})"
+    cv2.putText(display_frame, threshold_text, (10, 90), 
+                cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 0), 2)
+    
     # Display everything over the video feed.
     cv2.imshow('Video', display_frame)
     
-    # Break the loop and stop the script if 'q' is pressed
-    if cv2.waitKey(1) == ord("q"):
+    # Handle keyboard input
+    key = cv2.waitKey(1) & 0xFF
+    
+    if key == ord("q"):
         break
+    elif key >= ord("1") and key <= ord("9"):  # Keys 1-9
+        new_level = key - ord("0")
+        set_distance_threshold_level(new_level)
+    elif key == ord("0"):  # Key 0 = level 10
+        set_distance_threshold_level(10)
+    elif key == ord("h"):  # Help key
+        print("\n=== KEYBOARD CONTROLS ===")
+        print("1-9: Set threshold level 1-9")
+        print("0: Set threshold level 10")
+        print("h: Show this help")
+        print("q: Quit")
+        print("========================")
 
 # By breaking the loop we run this code here which closes everything
 cv2.destroyAllWindows()

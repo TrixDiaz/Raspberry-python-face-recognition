@@ -70,6 +70,7 @@ class DatasetManager:
     def get_face_images_from_detections(self, face_name):
         """
         Retrieve actual face images from face_detections collection for a specific person.
+        Only gets images from face_detections collection, not stored images.
         
         Args:
             face_name: Name of the person to get images for
@@ -84,17 +85,17 @@ class DatasetManager:
         try:
             # Query face_detections collection for known faces with this name
             detections_ref = self.firebase_service.db.collection('face_detections')
-            query = detections_ref.where('type', '==', 'known_face').where('name', '==', face_name)
+            query = detections_ref.where('type', '==', 'known_face').where('name', '==', face_name).order_by('timestamp', direction=self.firebase_service.db.Query.DESCENDING).limit(20)  # Limit to recent 20 images
             docs = query.stream()
             
             images = []
             for doc in docs:
                 detection_data = doc.to_dict()
                 face_image = detection_data.get('face_image')
-                if face_image:
+                if face_image and face_image.startswith('data:image') or len(face_image) > 100:  # Ensure it's base64 data
                     images.append(face_image)
             
-            logger.info(f"Retrieved {len(images)} actual images for {face_name} from face_detections")
+            logger.info(f"Retrieved {len(images)} actual images for {face_name} from face_detections collection only")
             return images
             
         except Exception as e:
@@ -194,7 +195,7 @@ class DatasetManager:
     
     def update_existing_face_dataset(self, face_name, face_data):
         """
-        Update dataset for an existing face by downloading all images and updating timestamp.
+        Update dataset for an existing face by downloading images ONLY from face_detections collection.
         
         Args:
             face_name: Name of the face
@@ -210,66 +211,25 @@ class DatasetManager:
                 os.makedirs(person_dir)
                 logger.info(f"Created directory for {face_name}")
             
-            # First, try to get actual images from face_detections collection
+            # ONLY get actual images from face_detections collection
             actual_images = self.get_face_images_from_detections(face_name)
             downloaded_count = 0
             
             if actual_images:
-                # Use actual images from face_detections
+                # Use actual images from face_detections only
                 logger.info(f"Using {len(actual_images)} actual images from face_detections for {face_name}")
                 for i, image_base64 in enumerate(actual_images):
                     filename = os.path.join(person_dir, f"{face_name}_{i+1:03d}.jpg")
                     if self.download_image_from_base64(image_base64, filename):
                         downloaded_count += 1
             else:
-                # Fallback to image_urls from faces collection
-                logger.info(f"No actual images found in face_detections, trying image_urls for {face_name}")
-                image_urls = face_data.get('image_url', [])
-                if not image_urls:
-                    logger.warning(f"No images found for {face_name}")
-                    return False
-                
-                for i, image_url in enumerate(image_urls):
-                    filename = os.path.join(person_dir, f"{face_name}_{i+1:03d}.jpg")
-                    
-                    # Check if image_url is base64 data or a filename
-                    if image_url.startswith('data:image') or len(image_url) > 100:
-                        # This looks like base64 data
-                        if self.download_image_from_base64(image_url, filename):
-                            downloaded_count += 1
-                    else:
-                        # This is a filename, try to copy from various possible locations
-                        possible_paths = [
-                            image_url,  # Direct path
-                            os.path.join("images", image_url),  # In images folder
-                            os.path.join("uploads", image_url),  # In uploads folder
-                            os.path.join("dataset", image_url),  # In dataset folder
-                        ]
-                        
-                        copied = False
-                        for source_path in possible_paths:
-                            if self.copy_image_from_filename(source_path, filename):
-                                downloaded_count += 1
-                                copied = True
-                                break
-                        
-                        if not copied:
-                            logger.warning(f"Could not find or copy image: {image_url}")
-                            # Create a placeholder image as fallback
-                            if self.create_placeholder_image(filename, face_name):
-                                downloaded_count += 1
-            
-            # If no images were downloaded, create at least one placeholder
-            if downloaded_count == 0:
-                logger.warning(f"No images found for {face_name}, creating placeholder")
-                placeholder_filename = os.path.join(person_dir, f"{face_name}_001.jpg")
-                if self.create_placeholder_image(placeholder_filename, face_name):
-                    downloaded_count = 1
+                logger.warning(f"No actual images found in face_detections for {face_name}")
+                return False
             
             # Update timestamp in Firebase
             self.update_face_timestamp(face_name)
             
-            logger.info(f"Updated dataset for {face_name}: {downloaded_count} images")
+            logger.info(f"Updated dataset for {face_name}: {downloaded_count} images from face_detections only")
             return downloaded_count > 0
             
         except Exception as e:
@@ -305,7 +265,7 @@ class DatasetManager:
     
     def add_new_face_to_dataset(self, face_name, face_data):
         """
-        Add a new face to the dataset.
+        Add a new face to the dataset using ONLY images from face_detections collection.
         
         Args:
             face_name: Name of the new face
@@ -321,66 +281,25 @@ class DatasetManager:
                 os.makedirs(person_dir)
                 logger.info(f"Created directory for new face: {face_name}")
             
-            # First, try to get actual images from face_detections collection
+            # ONLY get actual images from face_detections collection
             actual_images = self.get_face_images_from_detections(face_name)
             downloaded_count = 0
             
             if actual_images:
-                # Use actual images from face_detections
+                # Use actual images from face_detections only
                 logger.info(f"Using {len(actual_images)} actual images from face_detections for {face_name}")
                 for i, image_base64 in enumerate(actual_images):
                     filename = os.path.join(person_dir, f"{face_name}_{i+1:03d}.jpg")
                     if self.download_image_from_base64(image_base64, filename):
                         downloaded_count += 1
             else:
-                # Fallback to image_urls from faces collection
-                logger.info(f"No actual images found in face_detections, trying image_urls for {face_name}")
-                image_urls = face_data.get('image_url', [])
-                if not image_urls:
-                    logger.warning(f"No images found for new face {face_name}")
-                    return False
-                
-                for i, image_url in enumerate(image_urls):
-                    filename = os.path.join(person_dir, f"{face_name}_{i+1:03d}.jpg")
-                    
-                    # Check if image_url is base64 data or a filename
-                    if image_url.startswith('data:image') or len(image_url) > 100:
-                        # This looks like base64 data
-                        if self.download_image_from_base64(image_url, filename):
-                            downloaded_count += 1
-                    else:
-                        # This is a filename, try to copy from various possible locations
-                        possible_paths = [
-                            image_url,  # Direct path
-                            os.path.join("images", image_url),  # In images folder
-                            os.path.join("uploads", image_url),  # In uploads folder
-                            os.path.join("dataset", image_url),  # In dataset folder
-                        ]
-                        
-                        copied = False
-                        for source_path in possible_paths:
-                            if self.copy_image_from_filename(source_path, filename):
-                                downloaded_count += 1
-                                copied = True
-                                break
-                        
-                        if not copied:
-                            logger.warning(f"Could not find or copy image: {image_url}")
-                            # Create a placeholder image as fallback
-                            if self.create_placeholder_image(filename, face_name):
-                                downloaded_count += 1
-            
-            # If no images were downloaded, create at least one placeholder
-            if downloaded_count == 0:
-                logger.warning(f"No images found for {face_name}, creating placeholder")
-                placeholder_filename = os.path.join(person_dir, f"{face_name}_001.jpg")
-                if self.create_placeholder_image(placeholder_filename, face_name):
-                    downloaded_count = 1
+                logger.warning(f"No actual images found in face_detections for new face {face_name}")
+                return False
             
             # Add sync timestamp to Firebase
             self.add_sync_timestamp(face_name)
             
-            logger.info(f"Added new face {face_name} to dataset: {downloaded_count} images")
+            logger.info(f"Added new face {face_name} to dataset: {downloaded_count} images from face_detections only")
             return downloaded_count > 0
             
         except Exception as e:
