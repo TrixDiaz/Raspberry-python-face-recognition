@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 # Configuration
 DISTANCE_THRESHOLD = 0.4  # Lower = more strict, Higher = more lenient (0.3-0.6 recommended)
 MOTION_THRESHOLD = 10000  # Motion detection sensitivity - LOW (higher = less sensitive)
-MOTION_AREA_THRESHOLD = 2000  # Minimum area for motion detection
+MOTION_AREA_THRESHOLD = 10  # Minimum area for motion detection (FAST MODE)
 
 # API Configuration
 API_BASE_URL = "http://localhost:5000"  # Change this to your Flask server URL
