@@ -343,19 +343,30 @@ def process_frame(frame):
             # Extract face image
             face_image = frame[top:bottom, left:right]
         
-        # Only assign a name if the distance is below the threshold
+        # Process the face detection result
         if best_distance <= distance_threshold:
             name = known_face_names[best_match_index]
+            # Draw a green box for known faces
+            cv2.rectangle(frame, (left, top), (right, bottom), (0, 255, 0), 2)
+            # Put name text above the face box
+            cv2.putText(frame, name, (left, top - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.75, (0, 255, 0), 2)
             
-            # Store known face in Firebase
+            # Store known face in Firebase if face image exists
             if face_image.size > 0:
                 confidence = 1.0 - best_distance  # Convert distance to confidence
                 send_known_face(face_image, name, confidence)
         else:
             name = "Unknown"
-            # Store unknown face in Firebase
+            # Draw a red box for unknown faces
+            cv2.rectangle(frame, (left, top), (right, bottom), (0, 0, 255), 2)
+            # Put "Unknown" text above the face box
+            cv2.putText(frame, name, (left, top - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.75, (0, 0, 255), 2)
+            
+            # Store unknown face in Firebase if face image exists
             if face_image.size > 0:
                 send_unknown_face(face_image)
+                
+        face_names.append(name)
         
         face_names.append(name)
     
