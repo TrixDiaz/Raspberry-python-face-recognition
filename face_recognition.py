@@ -33,7 +33,7 @@ known_face_names = data["names"]
 
 # Initialize the camera
 picam2 = Picamera2()
-picam2.configure(picam2.create_preview_configuration(main={"format": 'XRGB8888', "size": (1920, 1080)}))
+picam2.configure(picam2.create_preview_configuration(main={"format": 'XRGB8888', "size": (1366, 768)}))
 picam2.start()
 
 
@@ -326,7 +326,7 @@ def check_api_health():
 # Main loop
 print("[INFO] Starting face recognition with Firebase integration...")
 print(f"[INFO] API Base URL: {API_BASE_URL}")
-print(f"[INFO] Firebase service: {'Available' if firebase_service else 'Not available'}")
+print(f"[INFO] Firebase service: {'Available' if firebase_service and firebase_service.db else 'Not available'}")
 
 while True:
     # Capture a frame from camera
@@ -357,9 +357,10 @@ while True:
                 cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0) if check_api_health() else (0, 0, 255), 2)
     
     # Add Firebase status indicator
-    firebase_status = "Firebase: OK" if firebase_service else "Firebase: OFFLINE"
+    firebase_connected = firebase_service and firebase_service.db is not None
+    firebase_status = "Firebase: OK" if firebase_connected else "Firebase: OFFLINE"
     cv2.putText(display_frame, firebase_status, (10, 60), 
-                cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0) if firebase_service else (0, 0, 255), 2)
+                cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0) if firebase_connected else (0, 0, 255), 2)
     
     # Display everything over the video feed.
     cv2.imshow('Video', display_frame)
