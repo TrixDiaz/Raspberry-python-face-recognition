@@ -298,27 +298,17 @@ def draw_motion_text(frame):
     global motion_detected
     
     if motion_detected:
-        # Motion text position (center top)
-        text = "MOTION DETECTED"
+        # Motion text position (upper right, below FPS)
+        text = "MOTION"
         font = cv2.FONT_HERSHEY_SIMPLEX
-        font_scale = 1.2
-        thickness = 3
+        font_scale = 0.6
+        thickness = 2
         
-        # Get text size for centering
-        (text_width, text_height), baseline = cv2.getTextSize(text, font, font_scale, thickness)
+        # Position in upper right corner, below FPS counter
+        text_x = frame.shape[1] - 120  # Right side
+        text_y = 60  # Below FPS counter
         
-        # Center the text horizontally
-        text_x = (frame.shape[1] - text_width) // 2
-        text_y = 50
-        
-        # Draw background rectangle
-        padding = 10
-        cv2.rectangle(frame, 
-                     (text_x - padding, text_y - text_height - padding), 
-                     (text_x + text_width + padding, text_y + baseline + padding), 
-                     (0, 0, 0), -1)  # Black background
-        
-        # Draw the text
+        # Draw the text (smaller, no background for cleaner look)
         cv2.putText(frame, text, (text_x, text_y), 
                    font, font_scale, (0, 255, 255), thickness)  # Yellow text
 
