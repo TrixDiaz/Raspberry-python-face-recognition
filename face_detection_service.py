@@ -16,9 +16,9 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Configuration
-DISTANCE_THRESHOLD_LEVEL = 5  # 1-10 scale: 1=slow/accurate, 10=fast/lenient
-MOTION_THRESHOLD = 10000  # Motion detection sensitivity - LOW (higher = less sensitive)
-MOTION_AREA_THRESHOLD = 10  # Minimum area for motion detection (FAST MODE)
+DISTANCE_THRESHOLD_LEVEL = 4  # 1-10 scale: 1=slow/accurate, 10=fast/lenient
+MOTION_THRESHOLD = 5000  # Motion detection sensitivity - MEDIUM (5000 = medium sensitivity)
+MOTION_AREA_THRESHOLD = 15  # Minimum area for motion detection (MEDIUM MODE)
 
 # Convert threshold level to actual distance threshold
 # Level 1 = 0.2 (very strict), Level 10 = 0.8 (very lenient)
@@ -99,12 +99,12 @@ def check_services_availability():
     
     # Only initialize Firebase if API is available
     if api_available and firebase_service is None:
-        try:
-            firebase_service = get_firebase_service()
+try:
+    firebase_service = get_firebase_service()
             firebase_available = True
-            logger.info("Firebase service initialized successfully")
-        except Exception as e:
-            logger.error(f"Failed to initialize Firebase service: {str(e)}")
+    logger.info("Firebase service initialized successfully")
+except Exception as e:
+    logger.error(f"Failed to initialize Firebase service: {str(e)}")
             firebase_available = False
     elif not api_available:
         # Disable Firebase if API is not available
@@ -129,8 +129,6 @@ fps = 0
 # Motion detection variables
 background_subtractor = cv2.createBackgroundSubtractorMOG2(detectShadows=True)
 motion_detected = False
-bell_icon_alpha = 0.0
-bell_fade_speed = 0.05
 
 
 # Cooldown tracking
@@ -252,7 +250,7 @@ def send_known_face(face_image, name, confidence):
         logger.error(f"Error saving known face: {str(e)}")
 
 def detect_motion(frame):
-    global motion_detected, bell_icon_alpha, last_motion_time
+    global motion_detected, last_motion_time
     
     # Apply background subtraction
     fg_mask = background_subtractor.apply(frame)
@@ -292,47 +290,37 @@ def detect_motion(frame):
                         logger.error(f"Error sending motion detection: {str(e)}")
             break
     
-    # Update bell icon alpha
-    if motion_detected:
-        bell_icon_alpha = min(1.0, bell_icon_alpha + bell_fade_speed)
-    else:
-        bell_icon_alpha = max(0.0, bell_icon_alpha - bell_fade_speed)
-    
     return motion_detected
 
-def draw_bell_icon(frame):
-    global bell_icon_alpha
+
+def draw_motion_text(frame):
+    """Draw motion detection text on the frame."""
+    global motion_detected
     
-    if bell_icon_alpha > 0:
-        # Bell icon position (upper right corner)
-        icon_size = 40
-        icon_x = frame.shape[1] - icon_size - 20
-        icon_y = 20
+    if motion_detected:
+        # Motion text position (center top)
+        text = "MOTION DETECTED"
+        font = cv2.FONT_HERSHEY_SIMPLEX
+        font_scale = 1.2
+        thickness = 3
         
-        # Create bell icon (simple circle with line)
-        overlay = frame.copy()
+        # Get text size for centering
+        (text_width, text_height), baseline = cv2.getTextSize(text, font, font_scale, thickness)
         
-        # Bell body (circle)
-        cv2.circle(overlay, (icon_x + icon_size//2, icon_y + icon_size//2), 
-                  icon_size//2 - 2, (0, 255, 255), -1)  # Yellow bell
-        cv2.circle(overlay, (icon_x + icon_size//2, icon_y + icon_size//2), 
-                  icon_size//2 - 2, (0, 0, 0), 2)  # Black border
+        # Center the text horizontally
+        text_x = (frame.shape[1] - text_width) // 2
+        text_y = 50
         
-        # Bell clapper (small circle)
-        cv2.circle(overlay, (icon_x + icon_size//2, icon_y + icon_size//2 + 5), 
-                  3, (0, 0, 0), -1)
+        # Draw background rectangle
+        padding = 10
+        cv2.rectangle(frame, 
+                     (text_x - padding, text_y - text_height - padding), 
+                     (text_x + text_width + padding, text_y + baseline + padding), 
+                     (0, 0, 0), -1)  # Black background
         
-        # Bell handle (line)
-        cv2.line(overlay, (icon_x + icon_size//2, icon_y + 2), 
-                (icon_x + icon_size//2, icon_y + icon_size//2 - 8), (0, 0, 0), 2)
-        
-        # Apply alpha blending
-        cv2.addWeighted(overlay, bell_icon_alpha, frame, 1 - bell_icon_alpha, 0, frame)
-        
-        # Add "MOTION" text
-        if motion_detected:
-            cv2.putText(frame, "MOTION", (icon_x - 10, icon_y + icon_size + 20), 
-                       cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
+        # Draw the text
+        cv2.putText(frame, text, (text_x, text_y), 
+                   font, font_scale, (0, 255, 255), thickness)  # Yellow text
 
 def process_frame(frame):
     global face_locations, face_encodings, face_names, FRAME_SKIP_COUNT
@@ -410,7 +398,7 @@ def process_frame(frame):
             # Store unknown face in Firebase if face image exists
             if face_image.size > 0:
                 send_unknown_face(face_image)
-                
+        
         face_names.append(name)
     
     return frame
@@ -462,6 +450,7 @@ print(f"[INFO] Firebase service: {'Available' if firebase_available else 'Not av
 threshold_info = get_threshold_info()
 print(f"[INFO] Distance Threshold: {threshold_info['description']} (Level {threshold_info['level']}, Actual: {threshold_info['actual_threshold']:.3f})")
 print("[INFO] Threshold Guide: 1=Strict/Slow, 5=Moderate, 10=Lenient/Fast")
+print(f"[INFO] Motion Sensitivity: MEDIUM (Area Threshold: {MOTION_AREA_THRESHOLD})")
 print("[INFO] Note: API and Firebase services will be disabled if app.py is not running")
 
 # Service check counter
@@ -487,8 +476,8 @@ while True:
     # Get the text and boxes to be drawn based on the processed frame
     display_frame = draw_results(processed_frame)
     
-    # Draw bell icon if motion is detected
-    draw_bell_icon(display_frame)
+    # Draw motion text if motion is detected
+    draw_motion_text(display_frame)
     
     # Calculate and update FPS
     current_fps = calculate_fps()
@@ -511,6 +500,11 @@ while True:
     threshold_info = get_threshold_info()
     threshold_text = f"Threshold: {threshold_info['level']} ({threshold_info['description'].split(': ')[1]})"
     cv2.putText(display_frame, threshold_text, (10, 90), 
+                cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 0), 2)
+    
+    # Add motion sensitivity indicator
+    motion_text = f"Motion: MEDIUM (Area: {MOTION_AREA_THRESHOLD})"
+    cv2.putText(display_frame, motion_text, (10, 120), 
                 cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 0), 2)
     
     # Display everything over the video feed.
