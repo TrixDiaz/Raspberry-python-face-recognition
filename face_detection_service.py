@@ -99,12 +99,12 @@ def check_services_availability():
     
     # Only initialize Firebase if API is available
     if api_available and firebase_service is None:
-try:
-    firebase_service = get_firebase_service()
+        try:
+            firebase_service = get_firebase_service()
             firebase_available = True
-    logger.info("Firebase service initialized successfully")
-except Exception as e:
-    logger.error(f"Failed to initialize Firebase service: {str(e)}")
+            logger.info("Firebase service initialized successfully")
+        except Exception as e:
+            logger.error(f"Failed to initialize Firebase service: {str(e)}")
             firebase_available = False
     elif not api_available:
         # Disable Firebase if API is not available
