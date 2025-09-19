@@ -17,8 +17,8 @@ logger = logging.getLogger(__name__)
 
 # Configuration
 DISTANCE_THRESHOLD_LEVEL = 4  # 1-10 scale: 1=slow/accurate, 10=fast/lenient
-MOTION_THRESHOLD = 5000  # Motion detection sensitivity - MEDIUM (5000 = medium sensitivity)
-MOTION_AREA_THRESHOLD = 15  # Minimum area for motion detection (MEDIUM MODE)
+MOTION_THRESHOLD = 15000  # Motion detection sensitivity - HARD (15000 = very strict, only huge changes)
+MOTION_AREA_THRESHOLD = 50  # Minimum area for motion detection (HARD MODE - only large movements)
 
 # Convert threshold level to actual distance threshold
 # Level 1 = 0.2 (very strict), Level 10 = 0.8 (very lenient)
@@ -440,7 +440,7 @@ print(f"[INFO] Firebase service: {'Available' if firebase_available else 'Not av
 threshold_info = get_threshold_info()
 print(f"[INFO] Distance Threshold: {threshold_info['description']} (Level {threshold_info['level']}, Actual: {threshold_info['actual_threshold']:.3f})")
 print("[INFO] Threshold Guide: 1=Strict/Slow, 5=Moderate, 10=Lenient/Fast")
-print(f"[INFO] Motion Sensitivity: MEDIUM (Area Threshold: {MOTION_AREA_THRESHOLD})")
+print(f"[INFO] Motion Sensitivity: HARD (Area Threshold: {MOTION_AREA_THRESHOLD})")
 print("[INFO] Note: API and Firebase services will be disabled if app.py is not running")
 
 # Service check counter
@@ -493,7 +493,7 @@ while True:
                 cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 0), 2)
     
     # Add motion sensitivity indicator
-    motion_text = f"Motion: MEDIUM (Area: {MOTION_AREA_THRESHOLD})"
+    motion_text = f"Motion: HARD (Area: {MOTION_AREA_THRESHOLD})"
     cv2.putText(display_frame, motion_text, (10, 120), 
                 cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 0), 2)
     
