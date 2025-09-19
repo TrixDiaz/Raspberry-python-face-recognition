@@ -6,6 +6,7 @@ from datetime import datetime
 import logging
 from firebase_service import get_firebase_service
 from utils import decode_base64_to_image
+from google.cloud import firestore
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -67,6 +68,99 @@ class DatasetManager:
             logger.error(f"Failed to retrieve faces from Firebase: {str(e)}")
             return {}
     
+    def debug_face_detections(self):
+        """
+        Debug method to see what's in the face_detections collection.
+        """
+        if not self.firebase_service or not self.firebase_service.db:
+            logger.error("Firebase service not available")
+            return
+        
+        try:
+            detections_ref = self.firebase_service.db.collection('face_detections')
+            docs = detections_ref.limit(10).stream()  # Get first 10 documents
+            
+            logger.info("=== DEBUG: Face Detections Collection ===")
+            for doc in docs:
+                detection_data = doc.to_dict()
+                logger.info(f"Doc ID: {doc.id}")
+                logger.info(f"Type: {detection_data.get('type')}")
+                logger.info(f"Name: {detection_data.get('name')}")
+                logger.info(f"Has face_image: {bool(detection_data.get('face_image'))}")
+                logger.info(f"Face image length: {len(detection_data.get('face_image', ''))}")
+                logger.info("---")
+            
+        except Exception as e:
+            logger.error(f"Failed to debug face_detections: {str(e)}")
+    
+    def create_face_documents_from_detections(self):
+        """
+        Create face documents in the faces collection based on face_detections.
+        This will populate the faces collection with sample image data.
+        """
+        if not self.firebase_service or not self.firebase_service.db:
+            logger.error("Firebase service not available")
+            return False
+        
+        try:
+            # Get all unique names from face_detections
+            detections_ref = self.firebase_service.db.collection('face_detections')
+            query = detections_ref.where('type', '==', 'known_face')
+            docs = query.stream()
+            
+            unique_names = set()
+            name_to_sample_image = {}
+            
+            for doc in docs:
+                detection_data = doc.to_dict()
+                name = detection_data.get('name')
+                if name and name not in unique_names:
+                    unique_names.add(name)
+                    # Get the first image for this person as sample
+                    face_image = detection_data.get('face_image')
+                    if face_image and (face_image.startswith('data:image') or len(face_image) > 100):
+                        name_to_sample_image[name] = face_image
+            
+            logger.info(f"Found {len(unique_names)} unique faces: {list(unique_names)}")
+            
+            # Create face documents in faces collection
+            faces_ref = self.firebase_service.db.collection('faces')
+            created_count = 0
+            
+            for name in unique_names:
+                try:
+                    # Check if face document already exists
+                    face_doc = faces_ref.document(name).get()
+                    if face_doc.exists:
+                        logger.info(f"Face document for {name} already exists, skipping")
+                        continue
+                    
+                    # Create new face document
+                    face_data = {
+                        'name': name,
+                        'created_at': datetime.now(),
+                        'updated_at': datetime.now(),
+                        'last_sync': None,
+                        'synced_to_dataset': False,
+                        'sample_image': name_to_sample_image.get(name, ''),
+                        'image_count': 0,  # Will be updated when we count actual images
+                        'status': 'active'
+                    }
+                    
+                    faces_ref.document(name).set(face_data)
+                    created_count += 1
+                    logger.info(f"Created face document for {name}")
+                    
+                except Exception as e:
+                    logger.error(f"Failed to create face document for {name}: {str(e)}")
+            
+            logger.info(f"Created {created_count} face documents in faces collection")
+            return created_count > 0
+            
+        except Exception as e:
+            logger.error(f"Failed to create face documents from detections: {str(e)}")
+            return False
+    
     def get_face_images_from_detections(self, face_name):
         """
         Retrieve actual face images from face_detections collection for a specific person.
@@ -84,18 +178,41 @@ class DatasetManager:
         
         try:
             # Query face_detections collection for known faces with this name
+            # First, get all known faces, then filter by name in Python to avoid composite index requirement
             detections_ref = self.firebase_service.db.collection('face_detections')
-            query = detections_ref.where('type', '==', 'known_face').where('name', '==', face_name).order_by('timestamp', direction=self.firebase_service.db.Query.DESCENDING).limit(20)  # Limit to recent 20 images
+            query = detections_ref.where('type', '==', 'known_face').limit(100)  # Get more records to filter locally
             docs = query.stream()
             
-            images = []
-            for doc in docs:
-                detection_data = doc.to_dict()
-                face_image = detection_data.get('face_image')
-                if face_image and face_image.startswith('data:image') or len(face_image) > 100:  # Ensure it's base64 data
-                    images.append(face_image)
+            timestamped_images = []
+            total_docs = 0
+            known_face_docs = 0
             
-            logger.info(f"Retrieved {len(images)} actual images for {face_name} from face_detections collection only")
+            for doc in docs:
+                total_docs += 1
+                detection_data = doc.to_dict()
+                if detection_data.get('type') == 'known_face':
+                    known_face_docs += 1
+                    # Filter by name in Python to avoid composite index requirement
+                    if detection_data.get('name') == face_name:
+                        face_image = detection_data.get('face_image')
+                        if face_image and (face_image.startswith('data:image') or len(face_image) > 100):  # Ensure it's base64 data
+                            timestamp = detection_data.get('timestamp')
+                            timestamped_images.append((timestamp, face_image))
+            
+            logger.info(f"Debug: Total docs checked: {total_docs}, Known face docs: {known_face_docs}, Images for {face_name}: {len(timestamped_images)}")
+            
+            # Sort by timestamp (most recent first) and take first 20
+            if timestamped_images:
+                try:
+                    timestamped_images.sort(key=lambda x: x[0] if x[0] else datetime.min, reverse=True)
+                    images = [img for _, img in timestamped_images[:20]]
+                except Exception as e:
+                    logger.warning(f"Could not sort by timestamp, using first 20 images: {str(e)}")
+                    images = [img for _, img in timestamped_images[:20]]
+            else:
+                images = []
+            
+            logger.info(f"Retrieved {len(images)} actual images for {face_name} from face_detections collection")
             return images
             
         except Exception as e:
@@ -371,10 +488,17 @@ class DatasetManager:
             logger.error("Firebase service not available")
             return {"success": False, "message": "Firebase service not available"}
         
+        # Debug: Check what's in face_detections collection
+        self.debug_face_detections()
+        
+        # Create face documents from face_detections if faces collection is empty
+        logger.info("Creating face documents from face_detections...")
+        self.create_face_documents_from_detections()
+        
         # Get all faces from Firebase
         firebase_faces = self.get_faces_from_firebase()
         if not firebase_faces:
-            logger.warning("No faces found in Firebase")
+            logger.warning("No faces found in Firebase after creating documents")
             return {"success": False, "message": "No faces found in Firebase"}
         
         # Get existing faces in dataset

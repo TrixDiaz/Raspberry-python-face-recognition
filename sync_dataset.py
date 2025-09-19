@@ -32,12 +32,12 @@ def main():
         print("\nSYNC RESULTS:")
         print("-" * 40)
         print(f"✓ Success: {result['success']}")
-        print(f"📊 Total faces in Firebase: {result['total_faces']}")
-        print(f"🔄 Existing faces updated: {result['existing_updated']}")
-        print(f"➕ New faces added: {result['new_faces_added']}")
+        print(f"📊 Total faces in Firebase: {result.get('total_faces', 0)}")
+        print(f"🔄 Existing faces updated: {result.get('existing_updated', 0)}")
+        print(f"➕ New faces added: {result.get('new_faces_added', 0)}")
         print(f"🤖 Model retrained: {result.get('model_retrained', False)}")
         
-        if result['errors']:
+        if result.get('errors'):
             print(f"\n❌ Errors ({len(result['errors'])}):")
             for error in result['errors']:
                 print(f"   • {error}")
