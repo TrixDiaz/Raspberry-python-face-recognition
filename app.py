@@ -17,7 +17,6 @@ CORS(app)  # Enable CORS for all routes
 # Global Firebase service instance
 firebase_service = None
 
-@app.before_first_request
 def initialize_firebase():
     """Initialize Firebase service on first request."""
     global firebase_service
@@ -27,6 +26,10 @@ def initialize_firebase():
     except Exception as e:
         logger.error(f"Failed to initialize Firebase service: {str(e)}")
         firebase_service = None
+
+# Initialize Firebase when the application starts
+with app.app_context():
+    initialize_firebase()
 
 @app.route('/health', methods=['GET'])
 def health_check():
