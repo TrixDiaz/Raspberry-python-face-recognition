@@ -62,8 +62,8 @@ class FirebaseService:
                 "processed": False
             }
             
-            # Add to motion_detections collection
-            doc_ref = self.db.collection('motion_detections').add(motion_data)
+            # Add to motion_logs collection (renamed from motion_detections)
+            doc_ref = self.db.collection('motion_logs').add(motion_data)
             logger.info(f"Motion detection saved with ID: {doc_ref[1].id}")
             return True
             
@@ -99,13 +99,52 @@ class FirebaseService:
                 "status": "pending_review"
             }
             
-            # Add to unknown_faces collection
-            doc_ref = self.db.collection('unknown_faces').add(face_data)
+            # Add to face_detections collection
+            doc_ref = self.db.collection('face_detections').add(face_data)
             logger.info(f"Unknown face saved with ID: {doc_ref[1].id}")
             return True
             
         except Exception as e:
             logger.error(f"Failed to save unknown face: {str(e)}")
+            return False
+    
+    def save_known_face(self, face_image_base64, name, timestamp=None, location="default", confidence=1.0):
+        """
+        Save known face detection event to Firebase.
+        
+        Args:
+            face_image_base64: Base64 encoded face image
+            name: Name of the recognized person
+            timestamp: When the face was detected (defaults to now)
+            location: Location identifier
+            confidence: Confidence level of face detection
+        """
+        try:
+            if not self.db:
+                logger.error("Firebase not initialized")
+                return False
+            
+            if timestamp is None:
+                timestamp = datetime.now()
+            
+            face_data = {
+                "timestamp": timestamp,
+                "location": location,
+                "confidence": confidence,
+                "type": "known_face",
+                "name": name,
+                "face_image": face_image_base64,
+                "processed": False,
+                "status": "recognized"
+            }
+            
+            # Add to face_detections collection
+            doc_ref = self.db.collection('face_detections').add(face_data)
+            logger.info(f"Known face ({name}) saved with ID: {doc_ref[1].id}")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Failed to save known face: {str(e)}")
             return False
     
     def get_motion_detections(self, limit=100, processed_only=False):
@@ -121,7 +160,7 @@ class FirebaseService:
                 logger.error("Firebase not initialized")
                 return []
             
-            query = self.db.collection('motion_detections').order_by('timestamp', direction=firestore.Query.DESCENDING).limit(limit)
+            query = self.db.collection('motion_logs').order_by('timestamp', direction=firestore.Query.DESCENDING).limit(limit)
             
             if processed_only:
                 query = query.where('processed', '==', True)
@@ -146,7 +185,7 @@ class FirebaseService:
                 logger.error("Firebase not initialized")
                 return []
             
-            query = self.db.collection('unknown_faces').order_by('timestamp', direction=firestore.Query.DESCENDING).limit(limit)
+            query = self.db.collection('face_detections').where('type', '==', 'unknown_face').order_by('timestamp', direction=firestore.Query.DESCENDING).limit(limit)
             
             if status:
                 query = query.where('status', '==', status)
@@ -158,6 +197,31 @@ class FirebaseService:
             logger.error(f"Failed to retrieve unknown faces: {str(e)}")
             return []
     
+    def get_face_detections(self, limit=100, face_type=None):
+        """
+        Retrieve face detection events from Firebase.
+        
+        Args:
+            limit: Maximum number of records to retrieve
+            face_type: Filter by face type ('known_face', 'unknown_face', or None for all)
+        """
+        try:
+            if not self.db:
+                logger.error("Firebase not initialized")
+                return []
+            
+            query = self.db.collection('face_detections').order_by('timestamp', direction=firestore.Query.DESCENDING).limit(limit)
+            
+            if face_type:
+                query = query.where('type', '==', face_type)
+            
+            docs = query.stream()
+            return [doc.to_dict() for doc in docs]
+            
+        except Exception as e:
+            logger.error(f"Failed to retrieve face detections: {str(e)}")
+            return []
+    
     def mark_motion_processed(self, doc_id):
         """Mark a motion detection event as processed."""
         try:
@@ -165,7 +229,7 @@ class FirebaseService:
                 logger.error("Firebase not initialized")
                 return False
             
-            self.db.collection('motion_detections').document(doc_id).update({'processed': True})
+            self.db.collection('motion_logs').document(doc_id).update({'processed': True})
             logger.info(f"Motion detection {doc_id} marked as processed")
             return True
             
@@ -180,11 +244,11 @@ class FirebaseService:
                 logger.error("Firebase not initialized")
                 return False
             
-            self.db.collection('unknown_faces').document(doc_id).update({
+            self.db.collection('face_detections').document(doc_id).update({
                 'processed': True,
                 'status': status
             })
-            logger.info(f"Unknown face {doc_id} marked as {status}")
+            logger.info(f"Face detection {doc_id} marked as {status}")
             return True
             
         except Exception as e:

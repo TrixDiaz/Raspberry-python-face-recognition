@@ -197,8 +197,8 @@ def report_unknown_face():
             "message": f"Internal server error: {str(e)}"
         }), 500
 
-@app.route('/motion-detections', methods=['GET'])
-def get_motion_detections():
+@app.route('/motion-logs', methods=['GET'])
+def get_motion_logs():
     """
     Retrieve motion detection events from Firebase.
     """
@@ -229,13 +229,65 @@ def get_motion_detections():
         }), 200
         
     except ValueError as e:
-        logger.error(f"Validation error in get motion detections: {str(e)}")
+        logger.error(f"Validation error in get motion logs: {str(e)}")
         return jsonify({
             "success": False,
             "message": f"Validation error: {str(e)}"
         }), 400
     except Exception as e:
-        logger.error(f"Error retrieving motion detections: {str(e)}")
+        logger.error(f"Error retrieving motion logs: {str(e)}")
+        logger.error(traceback.format_exc())
+        return jsonify({
+            "success": False,
+            "message": f"Internal server error: {str(e)}"
+        }), 500
+
+@app.route('/face-detections', methods=['GET'])
+def get_face_detections():
+    """
+    Retrieve face detection events from Firebase.
+    """
+    try:
+        if not firebase_service:
+            return jsonify({
+                "success": False,
+                "message": "Firebase service not available"
+            }), 503
+        
+        # Get query parameters
+        limit = int(request.args.get('limit', 100))
+        face_type = request.args.get('type', None)  # 'known_face', 'unknown_face', or None for all
+        
+        # Validate limit
+        if limit <= 0 or limit > 1000:
+            return jsonify({
+                "success": False,
+                "message": "Limit must be between 1 and 1000"
+            }), 400
+        
+        # Validate face_type
+        if face_type and face_type not in ['known_face', 'unknown_face']:
+            return jsonify({
+                "success": False,
+                "message": "Face type must be 'known_face' or 'unknown_face'"
+            }), 400
+        
+        faces = firebase_service.get_face_detections(limit=limit, face_type=face_type)
+        
+        return jsonify({
+            "success": True,
+            "count": len(faces),
+            "data": faces
+        }), 200
+        
+    except ValueError as e:
+        logger.error(f"Validation error in get face detections: {str(e)}")
+        return jsonify({
+            "success": False,
+            "message": f"Validation error: {str(e)}"
+        }), 400
+    except Exception as e:
+        logger.error(f"Error retrieving face detections: {str(e)}")
         logger.error(traceback.format_exc())
         return jsonify({
             "success": False,
@@ -387,7 +439,8 @@ def root():
             "health": "/health",
             "motion_detection": "/motion-detection",
             "unknown_face": "/unknown-face",
-            "motion_detections": "/motion-detections",
+            "motion_logs": "/motion-logs",
+            "face_detections": "/face-detections",
             "unknown_faces": "/unknown-faces"
         }
     }), 200

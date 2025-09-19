@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 
 # Configuration
 DISTANCE_THRESHOLD = 0.4  # Lower = more strict, Higher = more lenient (0.3-0.6 recommended)
-MOTION_THRESHOLD = 5000  # Motion detection sensitivity (higher = less sensitive)
+MOTION_THRESHOLD = 3000  # Motion detection sensitivity - MEDIUM (higher = less sensitive)
 MOTION_AREA_THRESHOLD = 1000  # Minimum area for motion detection
 
 # API Configuration
@@ -105,7 +105,7 @@ def send_motion_detection():
         logger.error(f"Error sending motion detection: {str(e)}")
 
 def send_unknown_face(face_image):
-    """Send unknown face detection to FastAPI backend."""
+    """Send unknown face detection to FastAPI backend and store in Firebase."""
     global last_unknown_face_report
     
     current_time = time.time()
@@ -119,30 +119,48 @@ def send_unknown_face(face_image):
             logger.error("Failed to encode face image")
             return
         
-        # Send to FastAPI
-        face_data = {
-            "face_image_base64": face_image_base64,
-            "timestamp": datetime.now().isoformat(),
-            "location": "raspberry_pi_hardware",
-            "confidence": 0.8
-        }
-        
-        response = requests.post(
-            f"{API_BASE_URL}/unknown-face",
-            json=face_data,
-            timeout=10
+        # Store directly in Firebase
+        success = firebase_service.save_unknown_face(
+            face_image_base64=face_image_base64,
+            timestamp=datetime.now(),
+            location="raspberry_pi_hardware",
+            confidence=0.8
         )
         
-        if response.status_code == 200:
-            logger.info("Unknown face sent to API successfully")
+        if success:
+            logger.info("Unknown face saved to Firebase successfully")
             last_unknown_face_report = current_time
         else:
-            logger.warning(f"Failed to send unknown face: {response.status_code}")
+            logger.warning("Failed to save unknown face to Firebase")
             
-    except requests.exceptions.RequestException as e:
-        logger.error(f"Network error sending unknown face: {str(e)}")
     except Exception as e:
-        logger.error(f"Error sending unknown face: {str(e)}")
+        logger.error(f"Error saving unknown face: {str(e)}")
+
+def send_known_face(face_image, name, confidence):
+    """Send known face detection to Firebase."""
+    try:
+        # Encode face image to base64
+        face_image_base64 = firebase_service.encode_image_to_base64(face_image)
+        if not face_image_base64:
+            logger.error("Failed to encode face image")
+            return
+        
+        # Store directly in Firebase
+        success = firebase_service.save_known_face(
+            face_image_base64=face_image_base64,
+            name=name,
+            timestamp=datetime.now(),
+            location="raspberry_pi_hardware",
+            confidence=confidence
+        )
+        
+        if success:
+            logger.info(f"Known face ({name}) saved to Firebase successfully")
+        else:
+            logger.warning(f"Failed to save known face ({name}) to Firebase")
+            
+    except Exception as e:
+        logger.error(f"Error saving known face: {str(e)}")
 
 def detect_motion(frame):
     global motion_detected, bell_icon_alpha
@@ -236,28 +254,34 @@ def process_frame(frame):
         best_match_index = np.argmin(face_distances)
         best_distance = face_distances[best_match_index]
         
+        # Extract face region from original frame for storage
+        if i < len(face_locations):
+            top, right, bottom, left = face_locations[i]
+            # Scale back up face locations
+            top *= cv_scaler
+            right *= cv_scaler
+            bottom *= cv_scaler
+            left *= cv_scaler
+            
+            # Extract face image
+            face_image = frame[top:bottom, left:right]
+        
         # Only assign a name if the distance is below the threshold
         if best_distance <= distance_threshold:
             name = known_face_names[best_match_index]
             # Check if the detected face is in our authorized list
             if name in authorized_names:
                 authorized_face_detected = True
+            
+            # Store known face in Firebase
+            if face_image.size > 0:
+                confidence = 1.0 - best_distance  # Convert distance to confidence
+                send_known_face(face_image, name, confidence)
         else:
             name = "Unknown"
-            # Send unknown face to API
-            if i < len(face_locations):
-                # Extract face region from original frame
-                top, right, bottom, left = face_locations[i]
-                # Scale back up face locations
-                top *= cv_scaler
-                right *= cv_scaler
-                bottom *= cv_scaler
-                left *= cv_scaler
-                
-                # Extract face image
-                face_image = frame[top:bottom, left:right]
-                if face_image.size > 0:
-                    send_unknown_face(face_image)
+            # Store unknown face in Firebase
+            if face_image.size > 0:
+                send_unknown_face(face_image)
         
         face_names.append(name)
     
