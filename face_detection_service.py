@@ -17,13 +17,13 @@ logger = logging.getLogger(__name__)
 
 # Configuration
 DISTANCE_THRESHOLD = 0.4  # Lower = more strict, Higher = more lenient (0.3-0.6 recommended)
-MOTION_THRESHOLD = 5000  # Motion detection sensitivity - LOW (higher = less sensitive)
+MOTION_THRESHOLD = 10000  # Motion detection sensitivity - LOW (higher = less sensitive)
 MOTION_AREA_THRESHOLD = 2000  # Minimum area for motion detection
 
 # API Configuration
 API_BASE_URL = "http://localhost:5000"  # Change this to your Flask server URL
-MOTION_COOLDOWN = 5  # Seconds between motion detection reports
-UNKNOWN_FACE_COOLDOWN = 4777710  # Seconds between unknown face reports
+MOTION_COOLDOWN = 10  # Seconds between motion detection reports
+UNKNOWN_FACE_COOLDOWN = 10  # Seconds between unknown face reports
 
 # Load pre-trained face encodings
 print("[INFO] loading encodings...")
