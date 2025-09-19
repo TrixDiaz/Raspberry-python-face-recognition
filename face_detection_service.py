@@ -77,13 +77,43 @@ picam2.start()
 time.sleep(2)  # Give the camera time to warm up
 
 
+def check_api_health():
+    """Check if the API is available."""
+    try:
+        response = requests.get(f"{API_BASE_URL}/health", timeout=3)
+        return response.status_code == 200
+    except:
+        return False
+
 # Initialize Firebase service
 firebase_service = None
-try:
-    firebase_service = get_firebase_service()
-    logger.info("Firebase service initialized successfully")
-except Exception as e:
-    logger.error(f"Failed to initialize Firebase service: {str(e)}")
+api_available = False
+firebase_available = False
+
+def check_services_availability():
+    """Check if app.py and Firebase services are available."""
+    global api_available, firebase_available, firebase_service
+    
+    # Check if API is running
+    api_available = check_api_health()
+    
+    # Only initialize Firebase if API is available
+    if api_available and firebase_service is None:
+        try:
+            firebase_service = get_firebase_service()
+            firebase_available = True
+            logger.info("Firebase service initialized successfully")
+        except Exception as e:
+            logger.error(f"Failed to initialize Firebase service: {str(e)}")
+            firebase_available = False
+    elif not api_available:
+        # Disable Firebase if API is not available
+        firebase_service = None
+        firebase_available = False
+        logger.warning("API not available, Firebase service disabled")
+
+# Initial service check
+check_services_availability()
 
 # Initialize our variables
 cv_scaler = 4  # this has to be a whole number
@@ -111,6 +141,10 @@ last_known_face_report = {}  # Dictionary to track cooldown per person
 def send_motion_detection():
     """Send motion detection to FastAPI backend."""
     global last_motion_report
+    
+    # Check if API is available
+    if not api_available:
+        return
     
     current_time = time.time()
     if current_time - last_motion_report < MOTION_COOLDOWN:
@@ -145,6 +179,10 @@ def send_unknown_face(face_image):
     """Send unknown face detection to FastAPI backend and store in Firebase."""
     global last_unknown_face_report
     
+    # Check if Firebase is available
+    if not firebase_available or not firebase_service:
+        return
+    
     current_time = time.time()
     if current_time - last_unknown_face_report < UNKNOWN_FACE_COOLDOWN:
         return
@@ -176,6 +214,10 @@ def send_unknown_face(face_image):
 def send_known_face(face_image, name, confidence):
     """Send known face detection to Firebase with cooldown."""
     global last_known_face_report
+    
+    # Check if Firebase is available
+    if not firebase_available or not firebase_service:
+        return
     
     current_time = time.time()
     
@@ -232,7 +274,7 @@ def detect_motion(frame):
             motion_detected = True
             if current_time - last_motion_time >= MOTION_COOLDOWN:
                 # Send motion detection to Firebase
-                if firebase_service:
+                if firebase_available and firebase_service:
                     try:
                         motion_frame = frame.copy()
                         motion_base64 = encode_image_to_base64(motion_frame)
@@ -410,27 +452,31 @@ def calculate_fps():
         start_time = time.time()
     return fps
 
-def check_api_health():
-    """Check if the API is available."""
-    try:
-        response = requests.get(f"{API_BASE_URL}/health", timeout=3)
-        return response.status_code == 200
-    except:
-        return False
-
 # Main loop
 print("[INFO] Starting face recognition with Firebase integration...")
 print(f"[INFO] API Base URL: {API_BASE_URL}")
-print(f"[INFO] Firebase service: {'Available' if firebase_service and firebase_service.db else 'Not available'}")
+print(f"[INFO] API service: {'Available' if api_available else 'Not available'}")
+print(f"[INFO] Firebase service: {'Available' if firebase_available else 'Not available'}")
 
 # Display threshold information
 threshold_info = get_threshold_info()
 print(f"[INFO] Distance Threshold: {threshold_info['description']} (Level {threshold_info['level']}, Actual: {threshold_info['actual_threshold']:.3f})")
 print("[INFO] Threshold Guide: 1=Strict/Slow, 5=Moderate, 10=Lenient/Fast")
+print("[INFO] Note: API and Firebase services will be disabled if app.py is not running")
+
+# Service check counter
+service_check_counter = 0
+SERVICE_CHECK_INTERVAL = 30  # Check services every 30 frames
 
 while True:
     # Capture a frame from camera
     frame = picam2.capture_array()
+    
+    # Periodically check service availability
+    service_check_counter += 1
+    if service_check_counter >= SERVICE_CHECK_INTERVAL:
+        check_services_availability()
+        service_check_counter = 0
     
     # Detect motion in the frame
     detect_motion(frame)
@@ -452,15 +498,14 @@ while True:
                 cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
     
     # Add API status indicator
-    api_status = "API: OK" if check_api_health() else "API: OFFLINE"
+    api_status = "API: OK" if api_available else "API: OFFLINE"
     cv2.putText(display_frame, api_status, (10, 30), 
-                cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0) if check_api_health() else (0, 0, 255), 2)
+                cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0) if api_available else (0, 0, 255), 2)
     
     # Add Firebase status indicator
-    firebase_connected = firebase_service and firebase_service.db is not None
-    firebase_status = "Firebase: OK" if firebase_connected else "Firebase: OFFLINE"
+    firebase_status = "Firebase: OK" if firebase_available else "Firebase: OFFLINE"
     cv2.putText(display_frame, firebase_status, (10, 60), 
-                cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0) if firebase_connected else (0, 0, 255), 2)
+                cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0) if firebase_available else (0, 0, 255), 2)
     
     # Add threshold level indicator
     threshold_info = get_threshold_info()
