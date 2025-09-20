@@ -36,8 +36,8 @@ class FirebaseService:
                     'projectId': config.get('project_id', 'auth-b83c4')
                 })
             
-            # Get Firestore client with explicit project ID
-            self.db = firestore.client(project=config.get('project_id', 'auth-b83c4'))
+            # Get Firestore client
+            self.db = firestore.client()
             logger.info("Firebase initialized successfully")
             
         except Exception as e:
