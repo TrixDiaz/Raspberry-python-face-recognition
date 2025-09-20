@@ -35,6 +35,7 @@ def main():
         print(f"📊 Total faces in Firebase: {result.get('total_faces', 0)}")
         print(f"🔄 Existing faces updated: {result.get('existing_updated', 0)}")
         print(f"➕ New faces added: {result.get('new_faces_added', 0)}")
+        print(f"📸 Total images downloaded: {result.get('total_images_downloaded', 0)}")
         print(f"🤖 Model retrained: {result.get('model_retrained', False)}")
         
         if result.get('errors'):
@@ -47,7 +48,7 @@ def main():
         print("="*60)
         
         # Return appropriate exit code
-        if result['success'] and not result['errors']:
+        if result['success'] and not result.get('errors'):
             print("🎉 Dataset sync completed successfully!")
             return 0
         else:
