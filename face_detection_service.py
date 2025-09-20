@@ -34,7 +34,6 @@ def set_distance_threshold_level(level):
                    10 = fast but less accurate (lenient matching)
     """
     global DISTANCE_THRESHOLD_LEVEL, DISTANCE_THRESHOLD
-    
     if 1 <= level <= 10:
         DISTANCE_THRESHOLD_LEVEL = level
         DISTANCE_THRESHOLD = 0.2 + (level - 1) * 0.067
