@@ -27,10 +27,17 @@ class FirebaseService:
             
             # Initialize the app (only if not already initialized)
             if not firebase_admin._apps:
-                firebase_admin.initialize_app(cred)
+                # Set environment variables to avoid ALTS credentials issues
+                import os
+                os.environ['GOOGLE_APPLICATION_CREDENTIALS'] = config_path
+                os.environ['GRPC_DNS_RESOLVER'] = 'native'
+                
+                firebase_admin.initialize_app(cred, {
+                    'projectId': config.get('project_id', 'auth-b83c4')
+                })
             
-            # Get Firestore client
-            self.db = firestore.client()
+            # Get Firestore client with explicit project ID
+            self.db = firestore.client(project=config.get('project_id', 'auth-b83c4'))
             logger.info("Firebase initialized successfully")
             
         except Exception as e:

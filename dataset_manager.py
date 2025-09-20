@@ -52,34 +52,63 @@ class DatasetManager:
             return {}
         
         try:
-            # Get all known face detections
+            logger.info("Starting to retrieve all known faces from Firebase...")
+            
+            # Get all known face detections - try multiple approaches
             detections_ref = self.firebase_service.db.collection('face_detections')
-            query = detections_ref.where('type', '==', 'known_face')
-            docs = query.stream()
+            
+            # First, try to get all documents and filter in Python (more reliable)
+            all_docs = detections_ref.stream()
             
             faces_data = {}
             total_docs = 0
+            known_face_docs = 0
             
-            for doc in docs:
+            for doc in all_docs:
                 total_docs += 1
                 detection_data = doc.to_dict()
-                name = detection_data.get('name')
-                face_image = detection_data.get('face_image')
+                doc_type = detection_data.get('type')
                 
-                if name and face_image and (face_image.startswith('data:image') or len(face_image) > 100):
-                    if name not in faces_data:
-                        faces_data[name] = []
+                # Only process known_face documents
+                if doc_type == 'known_face':
+                    known_face_docs += 1
+                    name = detection_data.get('name')
+                    face_image = detection_data.get('face_image')
                     
-                    # Add timestamp and image data
-                    timestamp = detection_data.get('timestamp')
-                    faces_data[name].append({
-                        'image': face_image,
-                        'timestamp': timestamp,
-                        'confidence': detection_data.get('confidence', 1.0)
-                    })
+                    logger.debug(f"Processing document for {name} - type: {doc_type}")
+                    
+                    if name and face_image:
+                        # Check if image data is valid (base64 or data URL)
+                        is_valid_image = (
+                            face_image.startswith('data:image') or 
+                            len(face_image) > 100 or
+                            face_image.startswith('/9j/')  # JPEG base64 starts with this
+                        )
+                        
+                        if is_valid_image:
+                            if name not in faces_data:
+                                faces_data[name] = []
+                            
+                            # Add timestamp and image data
+                            timestamp = detection_data.get('timestamp')
+                            faces_data[name].append({
+                                'image': face_image,
+                                'timestamp': timestamp,
+                                'confidence': detection_data.get('confidence', 1.0),
+                                'doc_id': doc.id
+                            })
+                            logger.debug(f"Added image for {name}")
+                        else:
+                            logger.warning(f"Invalid image data for {name}: {len(face_image) if face_image else 0} chars")
+                    else:
+                        logger.warning(f"Missing name or image data in document: name={name}, has_image={bool(face_image)}")
             
-            logger.info(f"Retrieved {total_docs} face detection documents")
+            logger.info(f"Retrieved {total_docs} total documents, {known_face_docs} known face documents")
             logger.info(f"Found {len(faces_data)} unique known faces: {list(faces_data.keys())}")
+            
+            # Log details for each person found
+            for name, images in faces_data.items():
+                logger.info(f"  - {name}: {len(images)} images")
             
             # Sort images by timestamp for each person (most recent first)
             for name in faces_data:
@@ -92,6 +121,59 @@ class DatasetManager:
             
         except Exception as e:
             logger.error(f"Failed to retrieve known faces from detections: {str(e)}")
+            logger.error(f"Exception type: {type(e).__name__}")
+            import traceback
+            logger.error(f"Traceback: {traceback.format_exc()}")
+            return {}
+    
+    def get_all_known_faces_alternative(self):
+        """
+        Alternative method to get all known faces using a different approach.
+        This is a fallback method in case the main method fails.
+        
+        Returns:
+            dict: Dictionary with face names as keys and list of images as values
+        """
+        if not self.firebase_service or not self.firebase_service.db:
+            logger.error("Firebase service not available")
+            return {}
+        
+        try:
+            logger.info("Trying alternative method to retrieve known faces...")
+            
+            # Try using a different query approach
+            detections_ref = self.firebase_service.db.collection('face_detections')
+            
+            # Get all documents and filter manually
+            all_docs = list(detections_ref.stream())
+            logger.info(f"Retrieved {len(all_docs)} total documents from face_detections")
+            
+            faces_data = {}
+            
+            for doc in all_docs:
+                detection_data = doc.to_dict()
+                doc_type = detection_data.get('type')
+                
+                if doc_type == 'known_face':
+                    name = detection_data.get('name')
+                    face_image = detection_data.get('face_image')
+                    
+                    if name and face_image:
+                        if name not in faces_data:
+                            faces_data[name] = []
+                        
+                        faces_data[name].append({
+                            'image': face_image,
+                            'timestamp': detection_data.get('timestamp'),
+                            'confidence': detection_data.get('confidence', 1.0),
+                            'doc_id': doc.id
+                        })
+            
+            logger.info(f"Alternative method found {len(faces_data)} unique known faces: {list(faces_data.keys())}")
+            return faces_data
+            
+        except Exception as e:
+            logger.error(f"Alternative method also failed: {str(e)}")
             return {}
     
     def download_image_from_base64(self, image_base64, filename):
@@ -255,8 +337,14 @@ class DatasetManager:
         
         # Get all known faces from face_detections
         faces_data = self.get_all_known_faces_from_detections()
+        
+        # If no faces found, try alternative method
         if not faces_data:
-            logger.warning("No known faces found in Firebase face_detections")
+            logger.warning("No known faces found with primary method, trying alternative...")
+            faces_data = self.get_all_known_faces_alternative()
+        
+        if not faces_data:
+            logger.warning("No known faces found in Firebase face_detections with any method")
             return {"success": False, "message": "No known faces found in Firebase"}
         
         # Get existing faces in dataset

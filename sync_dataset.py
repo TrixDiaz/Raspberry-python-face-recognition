@@ -5,8 +5,13 @@ This script can be run manually or scheduled to run periodically.
 """
 
 import sys
+import os
 import logging
 from dataset_manager import DatasetManager
+
+# Set environment variables to avoid ALTS credentials issues on Raspberry Pi
+os.environ['GRPC_DNS_RESOLVER'] = 'native'
+os.environ['GRPC_ENABLE_FORK_SUPPORT'] = '1'
 
 # Configure logging
 logging.basicConfig(
