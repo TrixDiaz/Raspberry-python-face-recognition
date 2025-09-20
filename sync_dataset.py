@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """
-Simple script to sync dataset with Firebase by fetching all documents
-and storing sample images in the local dataset.
+Bidirectional sync script for Firebase and local dataset.
+- Uploads local captured images to Firebase
+- Downloads Firebase documents with sample images to local dataset
+- Automatically retrains the face recognition model
 """
 
 import sys
@@ -12,7 +14,8 @@ import cv2
 import numpy as np
 from datetime import datetime
 from firebase_service import get_firebase_service
-from utils import decode_base64_to_image
+from utils import decode_base64_to_image, encode_image_to_base64
+import glob
 
 # Set environment variables to avoid ALTS credentials issues on Raspberry Pi
 os.environ['GRPC_DNS_RESOLVER'] = 'native'
@@ -86,6 +89,19 @@ class SimpleDatasetSync:
                     # Check if document has sample_image field
                     sample_image = doc_data.get('sample_image')
                     if sample_image:
+                        # Handle different image formats
+                        if isinstance(sample_image, list):
+                            # If it's an array of images, use the first one
+                            if len(sample_image) > 0:
+                                sample_image = sample_image[0]
+                                logger.info(f"Found image array with {len(sample_image)} images, using first one")
+                            else:
+                                continue  # Skip if array is empty
+                        
+                        # Check if it's a data URL and extract base64 part
+                        if isinstance(sample_image, str) and sample_image.startswith('data:image'):
+                            # Extract base64 part from data URL
+                            sample_image = sample_image.split(',')[1] if ',' in sample_image else sample_image
                         docs_with_images += 1
                         
                         # Extract name from document (try different possible fields)
@@ -99,11 +115,15 @@ class SimpleDatasetSync:
                             'id': doc.id,
                             'name': name,
                             'sample_image': sample_image,
+                            'sample_images': doc_data.get('sample_images', [sample_image]),  # Support multiple images
                             'timestamp': doc_data.get('timestamp'),
                             'collection': collection_name
                         })
                         
-                        logger.debug(f"Found document with sample image: {name} in {collection_name}")
+                        logger.info(f"Found document with sample image: {name} in {collection_name} (ID: {doc.id})")
+                    else:
+                        # Log documents without sample images for debugging
+                        logger.debug(f"Document {doc.id} in {collection_name} has no sample_image field")
                 
                 if collection_docs:
                     all_documents[collection_name] = collection_docs
@@ -112,6 +132,12 @@ class SimpleDatasetSync:
             logger.info(f"Total documents processed: {total_docs}")
             logger.info(f"Documents with sample images: {docs_with_images}")
             logger.info(f"Collections with sample images: {list(all_documents.keys())}")
+            
+            # Log detailed summary of what was found
+            for collection_name, docs in all_documents.items():
+                logger.info(f"Collection '{collection_name}' has {len(docs)} documents with sample images:")
+                for doc in docs:
+                    logger.info(f"  - {doc['name']} (ID: {doc['id']})")
             
             return all_documents
             
@@ -124,19 +150,29 @@ class SimpleDatasetSync:
     def download_image_from_base64(self, image_base64, filename):
         """Download and save a base64 encoded image to the dataset."""
         try:
+            logger.debug(f"Starting to decode base64 image (length: {len(image_base64)})")
+            
             # Decode base64 to image
             image_array = decode_base64_to_image(image_base64)
             if image_array is None:
-                logger.error(f"Failed to decode base64 image for {filename}")
+                logger.error(f"Failed to decode base64 image for {filename} - decode_base64_to_image returned None")
                 return False
             
+            logger.debug(f"Successfully decoded image, shape: {image_array.shape}")
+            
             # Save image
-            cv2.imwrite(filename, image_array)
-            logger.info(f"Saved image: {filename}")
-            return True
+            success = cv2.imwrite(filename, image_array)
+            if success:
+                logger.info(f"Saved image: {filename}")
+                return True
+            else:
+                logger.error(f"cv2.imwrite failed to save image: {filename}")
+                return False
             
         except Exception as e:
             logger.error(f"Failed to save image {filename}: {str(e)}")
+            import traceback
+            logger.error(f"Traceback: {traceback.format_exc()}")
             return False
     
     def create_placeholder_image(self, filename, person_name):
@@ -163,6 +199,120 @@ class SimpleDatasetSync:
             logger.error(f"Failed to create placeholder image {filename}: {str(e)}")
             return False
     
+    def get_local_dataset_images(self):
+        """Get all images from the local dataset directory."""
+        try:
+            logger.info("Scanning local dataset directory for images...")
+            
+            local_images = {}
+            total_images = 0
+            
+            if not os.path.exists(self.dataset_path):
+                logger.warning(f"Dataset directory does not exist: {self.dataset_path}")
+                return local_images
+            
+            # Get all person directories
+            for person_name in os.listdir(self.dataset_path):
+                person_dir = os.path.join(self.dataset_path, person_name)
+                
+                if os.path.isdir(person_dir):
+                    # Find all image files in the person directory
+                    image_extensions = ['*.jpg', '*.jpeg', '*.png', '*.bmp']
+                    person_images = []
+                    
+                    for extension in image_extensions:
+                        pattern = os.path.join(person_dir, extension)
+                        person_images.extend(glob.glob(pattern))
+                        # Also check uppercase extensions
+                        pattern_upper = os.path.join(person_dir, extension.upper())
+                        person_images.extend(glob.glob(pattern_upper))
+                    
+                    if person_images:
+                        local_images[person_name] = person_images
+                        total_images += len(person_images)
+                        logger.info(f"Found {len(person_images)} images for {person_name}")
+            
+            logger.info(f"Total local images found: {total_images} for {len(local_images)} persons")
+            return local_images
+            
+        except Exception as e:
+            logger.error(f"Failed to scan local dataset: {str(e)}")
+            return {}
+    
+    def upload_image_to_firebase(self, image_path, person_name, collection_name="faces"):
+        """Upload a local image to Firebase."""
+        try:
+            # Read the image
+            image_array = cv2.imread(image_path)
+            if image_array is None:
+                logger.error(f"Failed to read image: {image_path}")
+                return False
+            
+            # Convert to base64
+            image_base64 = encode_image_to_base64(image_array)
+            if not image_base64:
+                logger.error(f"Failed to encode image to base64: {image_path}")
+                return False
+            
+            # Create document data
+            doc_data = {
+                "name": person_name,
+                "sample_image": f"data:image/jpeg;base64,{image_base64}",
+                "timestamp": datetime.now(),
+                "source": "local_capture",
+                "image_path": os.path.basename(image_path),
+                "processed": False
+            }
+            
+            # Upload to Firebase
+            if not self.firebase_service or not self.firebase_service.db:
+                logger.error("Firebase service not available")
+                return False
+            
+            collection_ref = self.firebase_service.db.collection(collection_name)
+            doc_ref = collection_ref.add(doc_data)
+            
+            logger.info(f"Uploaded image {os.path.basename(image_path)} for {person_name} (ID: {doc_ref[1].id})")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Failed to upload image {image_path}: {str(e)}")
+            return False
+    
+    def upload_local_images_to_firebase(self, local_images, collection_name="faces"):
+        """Upload all local images to Firebase."""
+        logger.info("Starting to upload local images to Firebase...")
+        
+        upload_summary = {
+            "success": True,
+            "total_local_images": 0,
+            "images_uploaded": 0,
+            "failed_uploads": 0,
+            "persons_processed": 0,
+            "errors": []
+        }
+        
+        for person_name, image_paths in local_images.items():
+            try:
+                logger.info(f"Processing {person_name}: {len(image_paths)} images")
+                upload_summary["persons_processed"] += 1
+                
+                for image_path in image_paths:
+                    upload_summary["total_local_images"] += 1
+                    
+                    if self.upload_image_to_firebase(image_path, person_name, collection_name):
+                        upload_summary["images_uploaded"] += 1
+                    else:
+                        upload_summary["failed_uploads"] += 1
+                        
+            except Exception as e:
+                error_msg = f"Error processing {person_name}: {str(e)}"
+                logger.error(error_msg)
+                upload_summary["errors"].append(error_msg)
+        
+        logger.info(f"Local upload completed. Summary: {upload_summary}")
+        return upload_summary
+    
     def sync_documents_to_dataset(self, all_documents):
         """Sync all documents with sample images to the dataset."""
         logger.info("Starting to sync documents to dataset...")
@@ -183,13 +333,15 @@ class SimpleDatasetSync:
         for collection_name, documents in all_documents.items():
             logger.info(f"Processing collection: {collection_name} ({len(documents)} documents)")
             
-            for doc in documents:
+            for i, doc in enumerate(documents):
                 try:
                     sync_summary["total_documents"] += 1
                     sync_summary["documents_with_images"] += 1
                     
                     person_name = doc['name']
                     sample_image = doc['sample_image']
+                    
+                    logger.info(f"Processing document {i+1}/{len(documents)} for {person_name} (ID: {doc['id']})")
                     
                     # Create person directory
                     person_dir = os.path.join(self.dataset_path, person_name)
@@ -200,27 +352,45 @@ class SimpleDatasetSync:
                     # Create unique filename based on collection and document ID
                     filename = os.path.join(person_dir, f"{collection_name}_{doc['id']}.jpg")
                     
-                    # Download image
+                    logger.info(f"Attempting to download image to: {filename}")
+                    
+                    # Download primary image
                     if self.download_image_from_base64(sample_image, filename):
                         sync_summary["images_downloaded"] += 1
+                        logger.info(f"Successfully downloaded image for {person_name}")
                         
                         # Track unique persons processed
                         if person_name not in processed_persons:
                             processed_persons.add(person_name)
                             sync_summary["persons_processed"] += 1
+                            logger.info(f"New person added: {person_name}")
+                        
+                        # Handle additional images if available
+                        additional_images = doc.get('sample_images', [])
+                        if len(additional_images) > 1:
+                            logger.info(f"Found {len(additional_images)} additional images for {person_name}")
+                            for img_idx, additional_image in enumerate(additional_images[1:], 1):
+                                additional_filename = os.path.join(person_dir, f"{collection_name}_{doc['id']}_img{img_idx}.jpg")
+                                if self.download_image_from_base64(additional_image, additional_filename):
+                                    sync_summary["images_downloaded"] += 1
+                                    logger.info(f"Downloaded additional image {img_idx} for {person_name}")
+                                else:
+                                    logger.warning(f"Failed to download additional image {img_idx} for {person_name}")
                     else:
                         sync_summary["failed_downloads"] += 1
+                        logger.warning(f"Failed to download image for {person_name}, creating placeholder")
                         
                         # Create placeholder if download failed
                         placeholder_filename = os.path.join(person_dir, f"placeholder_{doc['id']}.jpg")
                         if self.create_placeholder_image(placeholder_filename, person_name):
                             sync_summary["images_downloaded"] += 1
+                            logger.info(f"Created placeholder for {person_name}")
                             
                             if person_name not in processed_persons:
                                 processed_persons.add(person_name)
                                 sync_summary["persons_processed"] += 1
                     
-                    logger.debug(f"Processed document {doc['id']} for {person_name}")
+                    logger.info(f"Completed processing document {doc['id']} for {person_name}")
                     
                 except Exception as e:
                     error_msg = f"Error processing document {doc.get('id', 'unknown')}: {str(e)}"
@@ -245,33 +415,60 @@ class SimpleDatasetSync:
             return False
     
     def full_sync_and_retrain(self):
-        """Perform full dataset sync and model retraining."""
-        logger.info("Starting full sync operation...")
+        """Perform full dataset sync and model retraining (bidirectional)."""
+        logger.info("Starting full bidirectional sync operation...")
         
-        # Fetch all documents with sample images
+        # Step 1: Upload local images to Firebase
+        logger.info("=" * 50)
+        logger.info("STEP 1: Uploading local images to Firebase")
+        logger.info("=" * 50)
+        
+        local_images = self.get_local_dataset_images()
+        upload_result = {"images_uploaded": 0, "failed_uploads": 0}
+        
+        if local_images:
+            upload_result = self.upload_local_images_to_firebase(local_images)
+            logger.info(f"Local upload completed: {upload_result['images_uploaded']} uploaded, {upload_result['failed_uploads']} failed")
+        else:
+            logger.info("No local images found to upload")
+        
+        # Step 2: Download Firebase documents to local dataset
+        logger.info("=" * 50)
+        logger.info("STEP 2: Downloading Firebase documents to local dataset")
+        logger.info("=" * 50)
+        
         all_documents = self.fetch_all_documents_with_sample_images()
         
         if not all_documents:
-            logger.warning("No documents with sample images found")
-            return {
-                "success": False, 
-                "message": "No documents with sample images found",
-                "model_retrained": False
+            logger.warning("No documents with sample images found in Firebase")
+            sync_result = {
+                "success": upload_result["images_uploaded"] > 0,
+                "message": "No documents with sample images found in Firebase",
+                "model_retrained": False,
+                "local_images_uploaded": upload_result["images_uploaded"],
+                "local_upload_failed": upload_result["failed_uploads"]
             }
+        else:
+            # Sync documents to dataset
+            sync_result = self.sync_documents_to_dataset(all_documents)
+            sync_result["local_images_uploaded"] = upload_result["images_uploaded"]
+            sync_result["local_upload_failed"] = upload_result["failed_uploads"]
         
-        # Sync documents to dataset
-        sync_result = self.sync_documents_to_dataset(all_documents)
+        # Step 3: Retrain model if any changes were made
+        total_changes = sync_result.get("images_downloaded", 0) + upload_result["images_uploaded"]
         
-        # Retrain model if images were downloaded
-        if sync_result["images_downloaded"] > 0:
-            logger.info("Images downloaded, retraining model...")
+        if total_changes > 0:
+            logger.info("=" * 50)
+            logger.info("STEP 3: Retraining model")
+            logger.info("=" * 50)
+            logger.info(f"Total changes detected: {total_changes} (downloaded: {sync_result.get('images_downloaded', 0)}, uploaded: {upload_result['images_uploaded']})")
             retrain_success = self.retrain_model()
             sync_result["model_retrained"] = retrain_success
         else:
             sync_result["model_retrained"] = False
-            logger.info("No images downloaded, skipping model retraining")
+            logger.info("No changes detected, skipping model retraining")
         
-        sync_result["success"] = sync_result["images_downloaded"] > 0
+        sync_result["success"] = total_changes > 0
         return sync_result
 
 def main():
@@ -291,6 +488,8 @@ def main():
         print("\nSYNC RESULTS:")
         print("-" * 40)
         print(f"✓ Success: {result['success']}")
+        print(f"📤 Local images uploaded: {result.get('local_images_uploaded', 0)}")
+        print(f"❌ Local upload failed: {result.get('local_upload_failed', 0)}")
         print(f"📊 Total documents: {result.get('total_documents', 0)}")
         print(f"📸 Documents with images: {result.get('documents_with_images', 0)}")
         print(f"⬇️  Images downloaded: {result.get('images_downloaded', 0)}")
