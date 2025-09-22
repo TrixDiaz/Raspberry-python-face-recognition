@@ -44,7 +44,7 @@ class FirebaseService:
             logger.error(f"Failed to initialize Firebase: {str(e)}")
             raise
     
-    def save_motion_detection(self, timestamp=None, location="default", confidence=1.0):
+    def save_motion_detection(self, timestamp=None, location="default", confidence=1.0, captured_photo=None):
         """
         Save motion detection event to Firebase.
         
@@ -52,6 +52,7 @@ class FirebaseService:
             timestamp: When the motion was detected (defaults to now)
             location: Location identifier
             confidence: Confidence level of motion detection
+            captured_photo: Base64 encoded captured photo (optional)
         """
         try:
             if not self.db:
@@ -68,6 +69,10 @@ class FirebaseService:
                 "type": "motion_detection",
                 "processed": False
             }
+            
+            # Add captured photo if provided
+            if captured_photo:
+                motion_data["captured_photo"] = captured_photo
             
             # Add to motion_logs collection (renamed from motion_detections)
             doc_ref = self.db.collection('motion_logs').add(motion_data)

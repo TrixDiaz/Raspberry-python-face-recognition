@@ -75,6 +75,7 @@ def report_motion_detection():
         timestamp = datetime.fromisoformat(timestamp_str) if timestamp_str else datetime.now()
         location = data.get('location', 'default')
         confidence = float(data.get('confidence', 1.0))
+        captured_photo = data.get('captured_photo')  # Optional base64 encoded photo
         
         # Validate confidence
         if not 0.0 <= confidence <= 1.0:
@@ -87,7 +88,8 @@ def report_motion_detection():
         success = firebase_service.save_motion_detection(
             timestamp=timestamp,
             location=location,
-            confidence=confidence
+            confidence=confidence,
+            captured_photo=captured_photo
         )
         
         if success:

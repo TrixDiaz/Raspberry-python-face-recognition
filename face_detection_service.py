@@ -278,11 +278,12 @@ def detect_motion(frame):
                         success = firebase_service.save_motion_detection(
                             timestamp=datetime.now(),
                             location="camera_1",
-                            confidence=area / (frame.shape[0] * frame.shape[1])
+                            confidence=area / (frame.shape[0] * frame.shape[1]),
+                            captured_photo=motion_base64
                         )
                         if success:
                             last_motion_time = current_time
-                            logger.info("Motion detection sent to Firebase")
+                            logger.info("Motion detection with captured photo sent to Firebase")
                         else:
                             logger.warning("Failed to send motion detection to Firebase")
                     except Exception as e:
