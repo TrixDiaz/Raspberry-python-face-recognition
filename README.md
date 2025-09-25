@@ -515,8 +515,16 @@ sudo apt install ffmpeg
 ### **Mobile Access:**
 
 - **Web Viewer**: `http://[YOUR_PI_IP]:8080` (auto-detects mobile)
-- **Direct H.264**: `http://[YOUR_PI_IP]:8080/stream/h264`
-- **Direct MJPEG**: `http://[YOUR_PI_IP]:8080/stream`
+- **React Native**: `http://[YOUR_PI_IP]:8080/stream/mp4`
+- **Android Studio**: `http://[YOUR_PI_IP]:8080/stream/rtsp`
+- **Mobile Browser**: `http://[YOUR_PI_IP]:8080/stream/h264`
+- **Desktop Browser**: `http://[YOUR_PI_IP]:8080/stream`
+
+### **API Endpoints:**
+
+- **Network Info**: `http://[YOUR_PI_IP]:8080/api/network`
+- **Stream Info**: `http://[YOUR_PI_IP]:8080/api/streams`
+- **Status**: `http://[YOUR_PI_IP]:8080/status`
 
 ## 📊 Mode Comparison
 

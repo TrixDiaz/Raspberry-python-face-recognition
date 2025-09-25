@@ -394,6 +394,98 @@ def generate_h264_frames():
             logger.error(f"Error generating H.264 frame: {str(e)}")
             time.sleep(0.1)
 
+def generate_mp4_frames():
+    """Generate MP4 frames for React Native/Android Studio."""
+    global camera, streaming_active
+    
+    while streaming_active:
+        try:
+            if camera is not None:
+                # Capture frame from camera
+                frame = camera.capture_array()
+                
+                # Convert RGB to BGR for OpenCV
+                frame_bgr = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
+                
+                # Detect motion and faces
+                motion_detected = detect_motion(frame_bgr)
+                frame_bgr = detect_faces(frame_bgr)
+                
+                # Add overlays
+                if motion_detected:
+                    cv2.putText(frame_bgr, "MOTION DETECTED", (10, 30), 
+                               cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
+                
+                cv2.putText(frame_bgr, "Mobile Stream", (10, frame_bgr.shape[0] - 20), 
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+                
+                # Encode as MP4-compatible format
+                ret, buffer = cv2.imencode('.jpg', frame_bgr, [cv2.IMWRITE_JPEG_QUALITY, 80])
+                if ret:
+                    frame_bytes = buffer.tobytes()
+                    yield frame_bytes
+            else:
+                # Send placeholder
+                placeholder = np.zeros((480, 640, 3), dtype=np.uint8)
+                cv2.putText(placeholder, "Camera Not Available", (200, 240), 
+                           cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
+                
+                ret, buffer = cv2.imencode('.jpg', placeholder, [cv2.IMWRITE_JPEG_QUALITY, 80])
+                if ret:
+                    frame_bytes = buffer.tobytes()
+                    yield frame_bytes
+            
+            time.sleep(0.033)  # ~30 FPS
+        except Exception as e:
+            logger.error(f"Error generating MP4 frame: {str(e)}")
+            time.sleep(0.1)
+
+def generate_rtsp_frames():
+    """Generate RTSP-like frames for mobile apps."""
+    global camera, streaming_active
+    
+    while streaming_active:
+        try:
+            if camera is not None:
+                # Capture frame from camera
+                frame = camera.capture_array()
+                
+                # Convert RGB to BGR for OpenCV
+                frame_bgr = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
+                
+                # Detect motion and faces
+                motion_detected = detect_motion(frame_bgr)
+                frame_bgr = detect_faces(frame_bgr)
+                
+                # Add overlays
+                if motion_detected:
+                    cv2.putText(frame_bgr, "MOTION DETECTED", (10, 30), 
+                               cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
+                
+                cv2.putText(frame_bgr, "RTSP Stream", (10, frame_bgr.shape[0] - 20), 
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+                
+                # Encode for RTSP streaming
+                ret, buffer = cv2.imencode('.jpg', frame_bgr, [cv2.IMWRITE_JPEG_QUALITY, 75])
+                if ret:
+                    frame_bytes = buffer.tobytes()
+                    yield frame_bytes
+            else:
+                # Send placeholder
+                placeholder = np.zeros((480, 640, 3), dtype=np.uint8)
+                cv2.putText(placeholder, "Camera Not Available", (200, 240), 
+                           cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
+                
+                ret, buffer = cv2.imencode('.jpg', placeholder, [cv2.IMWRITE_JPEG_QUALITY, 75])
+                if ret:
+                    frame_bytes = buffer.tobytes()
+                    yield frame_bytes
+            
+            time.sleep(0.033)  # ~30 FPS
+        except Exception as e:
+            logger.error(f"Error generating RTSP frame: {str(e)}")
+            time.sleep(0.1)
+
 class StreamHandler(BaseHTTPRequestHandler):
     """HTTP request handler for the camera stream."""
     
@@ -417,6 +509,9 @@ class StreamHandler(BaseHTTPRequestHandler):
             self.send_header('Content-Type', 'video/h264')
             self.send_header('Cache-Control', 'no-cache')
             self.send_header('Connection', 'close')
+            self.send_header('Access-Control-Allow-Origin', '*')
+            self.send_header('Access-Control-Allow-Methods', 'GET')
+            self.send_header('Access-Control-Allow-Headers', 'Content-Type')
             self.end_headers()
             
             try:
@@ -425,9 +520,40 @@ class StreamHandler(BaseHTTPRequestHandler):
             except Exception as e:
                 logger.error(f"H.264 stream error: {str(e)}")
                 
+        elif self.path == '/stream/mp4':
+            # MP4 stream for React Native/Android Studio
+            self.send_response(200)
+            self.send_header('Content-Type', 'video/mp4')
+            self.send_header('Cache-Control', 'no-cache')
+            self.send_header('Access-Control-Allow-Origin', '*')
+            self.send_header('Access-Control-Allow-Methods', 'GET')
+            self.send_header('Access-Control-Allow-Headers', 'Content-Type')
+            self.end_headers()
+            
+            try:
+                for frame in generate_mp4_frames():
+                    self.wfile.write(frame)
+            except Exception as e:
+                logger.error(f"MP4 stream error: {str(e)}")
+                
+        elif self.path == '/stream/rtsp':
+            # RTSP-like stream for mobile apps
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/x-rtsp')
+            self.send_header('Cache-Control', 'no-cache')
+            self.send_header('Access-Control-Allow-Origin', '*')
+            self.end_headers()
+            
+            try:
+                for frame in generate_rtsp_frames():
+                    self.wfile.write(frame)
+            except Exception as e:
+                logger.error(f"RTSP stream error: {str(e)}")
+                
         elif self.path == '/status':
             self.send_response(200)
             self.send_header('Content-Type', 'application/json')
+            self.send_header('Access-Control-Allow-Origin', '*')
             self.end_headers()
             
             status = {
@@ -437,10 +563,92 @@ class StreamHandler(BaseHTTPRequestHandler):
                 "motion_detection": motion_detection_enabled,
                 "known_faces_count": len(known_face_names) if known_face_names else 0,
                 "mode": "standalone",
-                "timestamp": datetime.now().isoformat()
+                "timestamp": datetime.now().isoformat(),
+                "streams": {
+                    "mjpeg": "/stream",
+                    "h264": "/stream/h264",
+                    "mp4": "/stream/mp4",
+                    "rtsp": "/stream/rtsp"
+                }
             }
             
             self.wfile.write(json.dumps(status).encode())
+            
+        elif self.path == '/api/streams':
+            # API endpoint for mobile app integration
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json')
+            self.send_header('Access-Control-Allow-Origin', '*')
+            self.send_header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
+            self.send_header('Access-Control-Allow-Headers', 'Content-Type, Authorization')
+            self.end_headers()
+            
+            streams_info = {
+                "available_streams": {
+                    "mjpeg": {
+                        "url": "/stream",
+                        "type": "image/jpeg",
+                        "description": "MJPEG stream for desktop browsers",
+                        "mobile_support": False
+                    },
+                    "h264": {
+                        "url": "/stream/h264",
+                        "type": "video/h264",
+                        "description": "H.264 stream for mobile devices",
+                        "mobile_support": True
+                    },
+                    "mp4": {
+                        "url": "/stream/mp4",
+                        "type": "video/mp4",
+                        "description": "MP4 stream for React Native/Android Studio",
+                        "mobile_support": True
+                    },
+                    "rtsp": {
+                        "url": "/stream/rtsp",
+                        "type": "application/x-rtsp",
+                        "description": "RTSP-like stream for mobile apps",
+                        "mobile_support": True
+                    }
+                },
+                "recommended_for_mobile": "/stream/mp4",
+                "recommended_for_react_native": "/stream/mp4",
+                "recommended_for_android_studio": "/stream/rtsp"
+            }
+            
+            self.wfile.write(json.dumps(streams_info).encode())
+            
+        elif self.path == '/api/network':
+            # Network information for mobile app connection
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json')
+            self.send_header('Access-Control-Allow-Origin', '*')
+            self.end_headers()
+            
+            import socket
+            try:
+                hostname = socket.gethostname()
+                local_ip = socket.gethostbyname(hostname)
+            except:
+                local_ip = "unknown"
+            
+            network_info = {
+                "server_ip": local_ip,
+                "port": 8080,
+                "base_url": f"http://{local_ip}:8080",
+                "stream_urls": {
+                    "mjpeg": f"http://{local_ip}:8080/stream",
+                    "h264": f"http://{local_ip}:8080/stream/h264",
+                    "mp4": f"http://{local_ip}:8080/stream/mp4",
+                    "rtsp": f"http://{local_ip}:8080/stream/rtsp"
+                },
+                "connection_help": {
+                    "react_native": f"Use: http://{local_ip}:8080/stream/mp4",
+                    "android_studio": f"Use: http://{local_ip}:8080/stream/rtsp",
+                    "mobile_browser": f"Use: http://{local_ip}:8080/stream/h264"
+                }
+            }
+            
+            self.wfile.write(json.dumps(network_info).encode())
             
         elif self.path == '/':
             # Serve the HTML viewer
