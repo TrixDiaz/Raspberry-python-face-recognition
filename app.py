@@ -853,14 +853,6 @@ def toggle_motion_detection():
             "message": f"Error: {str(e)}"
         }), 500
 
-@app.route('/viewer')
-def camera_viewer():
-    """Serve camera viewer HTML page."""
-    try:
-        with open('camera_viewer.html', 'r') as f:
-            return f.read()
-    except FileNotFoundError:
-        return "Camera viewer page not found", 404
 
 @app.route('/', methods=['GET'])
 def root():
@@ -870,16 +862,10 @@ def root():
         "version": "1.0.0",
         "endpoints": {
             "health": "/health",
-            "motion_detection": "/motion-detection",
-            "unknown_face": "/unknown-face",
-            "motion_logs": "/motion-logs",
-            "face_detections": "/face-detections",
-            "unknown_faces": "/unknown-faces",
             "stream": "/stream",
             "stream_start": "/stream/start",
             "stream_stop": "/stream/stop",
-            "stream_status": "/stream/status",
-            "camera_viewer": "/viewer"
+            "stream_status": "/stream/status"
         }
     }), 200
 

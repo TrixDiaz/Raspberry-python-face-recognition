@@ -17,14 +17,10 @@ python app.py
 Open your web browser and go to:
 
 ```
-http://[YOUR_PI_IP_ADDRESS]:5000/viewer
+http://[YOUR_PI_IP_ADDRESS]:5000/stream
 ```
 
-### 3. Start Streaming
-
-- Click "Start Stream" button
-- The camera feed will appear with face detection and motion detection overlays
-- Use "Stop Stream" to stop the camera
+The camera feed will appear with face detection and motion detection overlays.
 
 ## Features
 
@@ -44,17 +40,11 @@ http://[YOUR_PI_IP_ADDRESS]:5000/viewer
 
 ## Access Methods
 
-### Web Browser (Recommended)
-
-- **URL**: `http://[PI_IP]:5000/viewer`
-- **Features**: Web interface with detection controls
-- **Compatibility**: Works on any device with a web browser
-
 ### Direct Stream URL
 
 - **URL**: `http://[PI_IP]:5000/stream`
-- **Use Case**: Embed in other applications
 - **Format**: MJPEG stream with detection overlays
+- **Features**: Real-time face detection and motion detection
 
 ### Mobile Devices
 
@@ -117,8 +107,7 @@ libcamera-hello --list-cameras
 ### Manual Testing
 
 1. Start Flask app: `python app.py`
-2. Open browser: `http://localhost:5000/viewer`
-3. Click "Start Stream"
-4. Verify camera feed appears with detection overlays
+2. Open browser: `http://localhost:5000/stream`
+3. Verify camera feed appears with detection overlays
 
 Your Raspberry Pi camera is ready for live streaming with detection! 🎥✨

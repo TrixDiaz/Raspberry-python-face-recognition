@@ -108,24 +108,6 @@ def test_stream_url():
         logger.error(f"❌ Stream URL error: {str(e)}")
         return False
 
-def test_camera_viewer():
-    """Test camera viewer page."""
-    try:
-        response = requests.get(f"{API_BASE_URL}/viewer", timeout=5)
-        if response.status_code == 200:
-            content = response.text
-            if 'Raspberry Pi Camera Live Stream' in content:
-                logger.info("✅ Camera viewer page accessible")
-                return True
-            else:
-                logger.warning("⚠️  Camera viewer page accessible but content seems incorrect")
-                return True
-        else:
-            logger.error(f"❌ Camera viewer page failed: {response.status_code}")
-            return False
-    except Exception as e:
-        logger.error(f"❌ Camera viewer page error: {str(e)}")
-        return False
 
 def main():
     """Run all streaming tests."""
@@ -137,7 +119,6 @@ def main():
         ("Stream Status", test_stream_status),
         ("Start Stream", test_start_stream),
         ("Stream URL Access", test_stream_url),
-        ("Camera Viewer Page", test_camera_viewer),
         ("Stop Stream", test_stop_stream),
     ]
     
@@ -156,7 +137,6 @@ def main():
     if passed == total:
         print("🎉 All streaming tests passed!")
         print("\n📱 Access your camera stream:")
-        print(f"   🌐 Web Viewer: {API_BASE_URL}/viewer")
         print(f"   📹 Stream URL: {API_BASE_URL}/stream")
         print(f"   📊 API Status: {API_BASE_URL}/stream/status")
     else:
