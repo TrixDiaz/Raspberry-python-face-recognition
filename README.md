@@ -8,11 +8,29 @@ A comprehensive face recognition and motion detection system designed for Raspbe
 - **Motion Detection**: Advanced motion detection with configurable sensitivity
 - **Firebase Integration**: Cloud storage for face detections and motion logs
 - **REST API**: Complete API for data retrieval and management
+- **Standalone Streaming**: Independent camera streaming without API dependencies
 - **Dataset Management**: Automated dataset synchronization and model training
 - **Configurable Thresholds**: Adjustable face recognition and motion detection sensitivity
 
+## 🎯 Two Operating Modes
+
+### 1. **Full System Mode** (Main App)
+
+- Complete Flask API with Firebase integration
+- Real-time data upload to cloud storage
+- Full REST API endpoints for data management
+- Camera streaming with cloud connectivity
+
+### 2. **Standalone Mode** (Independent Streaming)
+
+- Camera streaming without Flask API
+- Face detection and motion detection (no cloud upload)
+- Lightweight HTTP server for streaming
+- Works independently when main app is not running
+
 ## 📋 Table of Contents
 
+- [Quick Start](#quick-start)
 - [System Architecture](#system-architecture)
 - [API Endpoints](#api-endpoints)
 - [Data Structures](#data-structures)
@@ -22,6 +40,54 @@ A comprehensive face recognition and motion detection system designed for Raspbe
 - [Firebase Collections](#firebase-collections)
 - [Face Recognition Values](#face-recognition-values)
 - [Troubleshooting](#troubleshooting)
+
+## 🚀 Quick Start
+
+### Option 1: Full System Mode (Recommended for Production)
+
+**Start the complete system with Firebase integration:**
+
+```bash
+# 1. Start the main Flask API
+python app.py
+
+# 2. In another terminal, start face detection
+python face_detection_service.py
+```
+
+**Access:**
+
+- **API**: `http://[YOUR_PI_IP]:5000`
+- **Camera Stream**: `http://[YOUR_PI_IP]:5000/stream`
+- **Health Check**: `http://[YOUR_PI_IP]:5000/health`
+
+### Option 2: Standalone Mode (Quick Camera Streaming)
+
+**Start independent camera streaming without API/Firebase:**
+
+```bash
+# Safe launcher (handles camera conflicts automatically)
+python run_standalone_safe.py
+```
+
+**Access:**
+
+- **Web Viewer**: `http://[YOUR_PI_IP]:8080`
+- **Direct Stream**: `http://[YOUR_PI_IP]:8080/stream`
+- **Status API**: `http://[YOUR_PI_IP]:8080/status`
+
+### Option 3: Manual Standalone (If camera conflicts occur)
+
+```bash
+# Stop main app first
+pkill -f app.py
+
+# Run camera cleanup
+python camera_cleanup.py
+
+# Start standalone streaming
+python start_standalone_stream.py
+```
 
 ## 🏗️ System Architecture
 
@@ -348,31 +414,91 @@ cv_scaler = 4  # Scale factor for face detection (higher = faster)
 
 ## 🚀 Usage
 
-### Start the API Server
+### Full System Mode (Production)
+
+**Start the complete system:**
 
 ```bash
+# 1. Start the Flask API server
 python app.py
-```
 
-The API will be available at `http://localhost:5000`
-
-### Start Face Detection
-
-```bash
+# 2. In another terminal, start face detection service
 python face_detection_service.py
 ```
 
-### Sync Dataset with Firebase
+**Features:**
+
+- Complete REST API at `http://[YOUR_PI_IP]:5000`
+- Camera streaming at `http://[YOUR_PI_IP]:5000/stream`
+- Firebase integration for data storage
+- Real-time face recognition and motion detection
+- Full data management capabilities
+
+### Standalone Mode (Quick Streaming)
+
+**Start independent camera streaming:**
+
+```bash
+# Recommended: Safe launcher with automatic conflict resolution
+python run_standalone_safe.py
+
+# Alternative: Manual startup
+python start_standalone_stream.py
+
+# Direct execution
+python standalone_stream.py
+```
+
+**Features:**
+
+- Lightweight HTTP server at `http://[YOUR_PI_IP]:8080`
+- Camera streaming without Flask API
+- Face detection and motion detection (no cloud upload)
+- Works independently when main app is not running
+- Built-in web viewer interface
+
+### Dataset Management
+
+**Sync dataset with Firebase:**
 
 ```bash
 python sync_dataset.py
 ```
 
-### Full Sync and Retrain
+**Full sync and retrain:**
 
 ```bash
 python dataset_manager.py
 ```
+
+### Camera Conflict Resolution
+
+**If you get "pipeline handler in use" errors:**
+
+```bash
+# Quick fix
+python run_standalone_safe.py
+
+# Manual fix
+pkill -f app.py
+python camera_cleanup.py
+python start_standalone_stream.py
+```
+
+## 📊 Mode Comparison
+
+| Feature              | Full System Mode | Standalone Mode |
+| -------------------- | ---------------- | --------------- |
+| **Camera Streaming** | ✅               | ✅              |
+| **Face Detection**   | ✅               | ✅              |
+| **Motion Detection** | ✅               | ✅              |
+| **Firebase Upload**  | ✅               | ❌              |
+| **REST API**         | ✅               | Limited         |
+| **Web Interface**    | ❌               | ✅              |
+| **Dependencies**     | High             | Low             |
+| **Startup Time**     | Slow             | Fast            |
+| **Resource Usage**   | High             | Low             |
+| **Use Case**         | Production       | Quick Demo      |
 
 ## 🗄️ Firebase Collections
 
@@ -474,22 +600,45 @@ The system uses Euclidean distance for face matching:
    # Should return: supported=1 detected=1
    ```
 
-2. **Firebase connection issues**
+2. **"Pipeline handler in use" error (Standalone Mode)**
+
+   ```bash
+   # Quick fix - automatic conflict resolution
+   python run_standalone_safe.py
+
+   # Manual fix
+   pkill -f app.py
+   python camera_cleanup.py
+   python start_standalone_stream.py
+   ```
+
+3. **Firebase connection issues (Full System Mode)**
 
    - Verify `firebase-config.json` is present and valid
    - Check Firestore rules allow read/write access
    - Ensure service account has proper permissions
 
-3. **Low face recognition accuracy**
+4. **Low face recognition accuracy**
 
    - Increase dataset size (more images per person)
    - Adjust distance threshold (try levels 1-3 for stricter matching)
    - Ensure good lighting and image quality
 
-4. **Performance issues**
+5. **Performance issues**
+
    - Increase `FACE_DETECTION_INTERVAL` to process fewer frames
    - Increase `cv_scaler` to reduce processing resolution
    - Use HOG model instead of CNN for face detection
+
+6. **Standalone mode not starting**
+
+   ```bash
+   # Check for camera conflicts
+   python camera_cleanup.py
+
+   # Verify camera availability
+   python -c "from picamera2 import Picamera2; print('Camera OK')"
+   ```
 
 ### Logging
 
