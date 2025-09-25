@@ -37,6 +37,14 @@ def check_dependencies():
         logger.error("pip install opencv-python picamera2 face-recognition numpy")
         return False
     
+    # Check for FFmpeg (required for H.264 encoding)
+    try:
+        subprocess.run(['ffmpeg', '-version'], capture_output=True, check=True)
+        logger.info("✅ FFmpeg is available for H.264 encoding")
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        logger.warning("⚠️  FFmpeg not found - H.264 mobile streaming will be disabled")
+        logger.warning("Install FFmpeg: sudo apt install ffmpeg")
+    
     return True
 
 def check_camera():

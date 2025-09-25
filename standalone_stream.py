@@ -20,6 +20,8 @@ import pickle
 import os
 import signal
 import sys
+import subprocess
+import tempfile
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -37,6 +39,11 @@ last_motion_time = 0
 motion_cooldown = 10  # seconds
 last_face_report = {}
 face_cooldown = 10  # seconds
+
+# H.264 encoding variables
+h264_encoder = None
+h264_process = None
+temp_fifo = None
 
 # Device Information
 DEVICE_INFO = {
@@ -81,9 +88,20 @@ def initialize_detection():
 
 def cleanup_camera():
     """Clean up any existing camera processes."""
-    global camera, streaming_active
+    global camera, streaming_active, h264_process, temp_fifo
     
     try:
+        # Stop H.264 encoder
+        if h264_process is not None:
+            h264_process.terminate()
+            h264_process = None
+        
+        # Clean up temp fifo
+        if temp_fifo is not None and os.path.exists(temp_fifo):
+            os.unlink(temp_fifo)
+            temp_fifo = None
+        
+        # Stop camera
         if camera is not None:
             camera.stop()
             camera.close()
@@ -92,6 +110,42 @@ def cleanup_camera():
         logger.info("Camera cleanup completed")
     except Exception as e:
         logger.warning(f"Camera cleanup warning: {str(e)}")
+
+def initialize_h264_encoder():
+    """Initialize H.264 encoder for mobile streaming."""
+    global h264_encoder, h264_process, temp_fifo
+    
+    try:
+        # Create temporary FIFO for H.264 stream
+        temp_fifo = tempfile.mktemp(suffix='.h264')
+        os.mkfifo(temp_fifo)
+        
+        # Start H.264 encoder process
+        h264_process = subprocess.Popen([
+            'ffmpeg',
+            '-f', 'rawvideo',
+            '-pix_fmt', 'yuv420p',
+            '-s', '640x480',
+            '-r', '30',
+            '-i', '-',
+            '-c:v', 'libx264',
+            '-preset', 'ultrafast',
+            '-tune', 'zerolatency',
+            '-crf', '23',
+            '-maxrate', '2M',
+            '-bufsize', '4M',
+            '-g', '30',
+            '-keyint_min', '30',
+            '-sc_threshold', '0',
+            '-f', 'h264',
+            '-'
+        ], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+        
+        logger.info("H.264 encoder initialized for mobile streaming")
+        return True
+    except Exception as e:
+        logger.error(f"Failed to initialize H.264 encoder: {str(e)}")
+        return False
 
 def initialize_camera():
     """Initialize camera for streaming with proper cleanup."""
@@ -104,11 +158,14 @@ def initialize_camera():
         # Wait a moment for cleanup
         time.sleep(1)
         
-        # Initialize new camera
+        # Initialize new camera with H.264 support
         camera = Picamera2()
-        camera_config = camera.create_preview_configuration()
-        camera_config["main"]["size"] = (640, 480)  # Lower resolution for streaming
-        camera_config["main"]["format"] = "RGB888"
+        
+        # Configure camera for H.264 streaming
+        camera_config = camera.create_video_configuration(
+            main={"size": (640, 480), "format": "YUV420"},
+            lores={"size": (320, 240), "format": "YUV420"}
+        )
         camera.configure(camera_config)
         camera.start()
         streaming_active = True
@@ -116,7 +173,10 @@ def initialize_camera():
         # Initialize detection systems
         initialize_detection()
         
-        logger.info("Camera initialized for streaming with detection")
+        # Initialize H.264 encoder for mobile streaming
+        initialize_h264_encoder()
+        
+        logger.info("Camera initialized for H.264 streaming with detection")
         return True
     except Exception as e:
         logger.error(f"Failed to initialize camera: {str(e)}")
@@ -227,7 +287,7 @@ def detect_faces(frame):
         return frame
 
 def generate_frames():
-    """Generate camera frames for streaming with detection overlays."""
+    """Generate camera frames for MJPEG streaming with detection overlays."""
     global camera, streaming_active
     
     while streaming_active:
@@ -283,12 +343,64 @@ def generate_frames():
             logger.error(f"Error generating frame: {str(e)}")
             time.sleep(0.1)
 
+def generate_h264_frames():
+    """Generate H.264 frames for mobile streaming."""
+    global camera, streaming_active, h264_process
+    
+    while streaming_active:
+        try:
+            if camera is not None and h264_process is not None:
+                # Capture frame from camera
+                frame = camera.capture_array()
+                
+                # Convert to YUV420 format for H.264 encoding
+                frame_yuv = cv2.cvtColor(frame, cv2.COLOR_RGB2YUV_I420)
+                
+                # Send frame to H.264 encoder
+                try:
+                    h264_process.stdin.write(frame_yuv.tobytes())
+                    h264_process.stdin.flush()
+                except:
+                    # Reinitialize encoder if it fails
+                    initialize_h264_encoder()
+                    continue
+                
+                # Read H.264 data from encoder
+                try:
+                    h264_data = h264_process.stdout.read(4096)
+                    if h264_data:
+                        yield h264_data
+                except:
+                    continue
+            else:
+                # Send placeholder if camera not available
+                placeholder = np.zeros((480, 640, 3), dtype=np.uint8)
+                cv2.putText(placeholder, "Camera Not Available", (200, 240), 
+                           cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
+                
+                # Convert placeholder to YUV and encode
+                placeholder_yuv = cv2.cvtColor(placeholder, cv2.COLOR_BGR2YUV_I420)
+                try:
+                    h264_process.stdin.write(placeholder_yuv.tobytes())
+                    h264_process.stdin.flush()
+                    h264_data = h264_process.stdout.read(4096)
+                    if h264_data:
+                        yield h264_data
+                except:
+                    pass
+            
+            time.sleep(0.033)  # ~30 FPS
+        except Exception as e:
+            logger.error(f"Error generating H.264 frame: {str(e)}")
+            time.sleep(0.1)
+
 class StreamHandler(BaseHTTPRequestHandler):
     """HTTP request handler for the camera stream."""
     
     def do_GET(self):
         """Handle GET requests."""
         if self.path == '/stream':
+            # MJPEG stream for desktop browsers
             self.send_response(200)
             self.send_header('Content-Type', 'multipart/x-mixed-replace; boundary=frame')
             self.end_headers()
@@ -298,6 +410,20 @@ class StreamHandler(BaseHTTPRequestHandler):
                     self.wfile.write(frame)
             except Exception as e:
                 logger.error(f"Stream error: {str(e)}")
+                
+        elif self.path == '/stream/h264':
+            # H.264 stream for mobile devices
+            self.send_response(200)
+            self.send_header('Content-Type', 'video/h264')
+            self.send_header('Cache-Control', 'no-cache')
+            self.send_header('Connection', 'close')
+            self.end_headers()
+            
+            try:
+                for frame in generate_h264_frames():
+                    self.wfile.write(frame)
+            except Exception as e:
+                logger.error(f"H.264 stream error: {str(e)}")
                 
         elif self.path == '/status':
             self.send_response(200)
@@ -422,6 +548,10 @@ class StreamHandler(BaseHTTPRequestHandler):
         </div>
         
         <div class="stream-container">
+            <video id="streamVideo" class="stream-image" autoplay muted playsinline controls style="display: none;">
+                <source src="/stream/h264" type="video/h264">
+                Your browser does not support H.264 video.
+            </video>
             <img src="/stream" alt="Camera Stream" class="stream-image" id="streamImage">
         </div>
         
@@ -452,6 +582,7 @@ class StreamHandler(BaseHTTPRequestHandler):
         <div class="controls">
             <button class="btn" onclick="refreshStatus()">🔄 Refresh Status</button>
             <button class="btn" onclick="reloadStream()">🔄 Reload Stream</button>
+            <button class="btn" onclick="toggleStreamMode()">📱 Toggle Mobile Mode</button>
         </div>
         
         <div class="info">
@@ -465,6 +596,12 @@ class StreamHandler(BaseHTTPRequestHandler):
     </div>
 
     <script>
+        let isMobileMode = false;
+        
+        function isMobileDevice() {
+            return /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+        }
+        
         function refreshStatus() {
             fetch('/status')
                 .then(response => response.json())
@@ -481,14 +618,46 @@ class StreamHandler(BaseHTTPRequestHandler):
         }
         
         function reloadStream() {
+            if (isMobileMode) {
+                const video = document.getElementById('streamVideo');
+                video.src = '/stream/h264?' + new Date().getTime();
+            } else {
+                const img = document.getElementById('streamImage');
+                img.src = '/stream?' + new Date().getTime();
+            }
+        }
+        
+        function toggleStreamMode() {
+            const video = document.getElementById('streamVideo');
             const img = document.getElementById('streamImage');
-            img.src = '/stream?' + new Date().getTime();
+            
+            isMobileMode = !isMobileMode;
+            
+            if (isMobileMode) {
+                img.style.display = 'none';
+                video.style.display = 'block';
+                video.src = '/stream/h264?' + new Date().getTime();
+                video.play();
+            } else {
+                video.style.display = 'none';
+                img.style.display = 'block';
+                img.src = '/stream?' + new Date().getTime();
+            }
+        }
+        
+        // Auto-detect mobile and set appropriate stream
+        function initializeStream() {
+            if (isMobileDevice()) {
+                isMobileMode = true;
+                toggleStreamMode();
+            }
         }
         
         // Auto-refresh status every 5 seconds
         setInterval(refreshStatus, 5000);
         
-        // Initial status check
+        // Initialize stream and status
+        initializeStream();
         refreshStatus();
     </script>
 </body>

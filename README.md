@@ -73,7 +73,8 @@ python run_standalone_safe.py
 **Access:**
 
 - **Web Viewer**: `http://[YOUR_PI_IP]:8080`
-- **Direct Stream**: `http://[YOUR_PI_IP]:8080/stream`
+- **MJPEG Stream**: `http://[YOUR_PI_IP]:8080/stream` (Desktop browsers)
+- **H.264 Stream**: `http://[YOUR_PI_IP]:8080/stream/h264` (Mobile devices)
 - **Status API**: `http://[YOUR_PI_IP]:8080/status`
 
 ### Option 3: Manual Standalone (If camera conflicts occur)
@@ -453,9 +454,11 @@ python standalone_stream.py
 
 - Lightweight HTTP server at `http://[YOUR_PI_IP]:8080`
 - Camera streaming without Flask API
+- **Mobile Support**: H.264 encoding for mobile devices
+- **Desktop Support**: MJPEG encoding for desktop browsers
 - Face detection and motion detection (no cloud upload)
 - Works independently when main app is not running
-- Built-in web viewer interface
+- Built-in web viewer interface with automatic mobile detection
 
 ### Dataset Management
 
@@ -484,6 +487,36 @@ pkill -f app.py
 python camera_cleanup.py
 python start_standalone_stream.py
 ```
+
+## 📱 Mobile Streaming Support
+
+The standalone mode includes enhanced mobile support with H.264 encoding:
+
+### **Stream Types:**
+
+- **MJPEG Stream**: `/stream` - For desktop browsers (higher bandwidth)
+- **H.264 Stream**: `/stream/h264` - For mobile devices (better compression)
+
+### **Mobile Features:**
+
+- Automatic mobile device detection
+- H.264 video encoding for better mobile performance
+- Lower bandwidth usage on mobile networks
+- Touch-friendly web interface
+- Responsive design for all screen sizes
+
+### **Requirements for H.264:**
+
+```bash
+# Install FFmpeg for H.264 encoding
+sudo apt install ffmpeg
+```
+
+### **Mobile Access:**
+
+- **Web Viewer**: `http://[YOUR_PI_IP]:8080` (auto-detects mobile)
+- **Direct H.264**: `http://[YOUR_PI_IP]:8080/stream/h264`
+- **Direct MJPEG**: `http://[YOUR_PI_IP]:8080/stream`
 
 ## 📊 Mode Comparison
 
