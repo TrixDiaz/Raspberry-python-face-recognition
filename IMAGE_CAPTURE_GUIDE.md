@@ -53,7 +53,12 @@ This system now captures images automatically when motion or face detection occu
   "confidence": 0.95,
   "type": "motion_detection",
   "captured_photo": "base64_encoded_image_data",
-  "processed": false
+  "processed": false,
+  "device_info": {
+    "device_name": "Raspberry Pi v5",
+    "camera": "Raspberry Pi Camera Module 3 12MP",
+    "model": "RPI-001"
+  }
 }
 ```
 
@@ -68,7 +73,12 @@ This system now captures images automatically when motion or face detection occu
   "name": "John_Doe", // only for known faces
   "face_image": "base64_encoded_face_data",
   "processed": false,
-  "status": "recognized" // or "pending_review" for unknown faces
+  "status": "recognized", // or "pending_review" for unknown faces
+  "device_info": {
+    "device_name": "Raspberry Pi v5",
+    "camera": "Raspberry Pi Camera Module 3 12MP",
+    "model": "RPI-001"
+  }
 }
 ```
 

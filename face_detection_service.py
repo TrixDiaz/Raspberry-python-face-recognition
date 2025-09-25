@@ -20,6 +20,13 @@ DISTANCE_THRESHOLD_LEVEL = 4  # 1-10 scale: 1=slow/accurate, 10=fast/lenient
 MOTION_THRESHOLD = 15000  # Motion detection sensitivity - HARD (15000 = very strict, only huge changes)
 MOTION_AREA_THRESHOLD = 50  # Minimum area for motion detection (HARD MODE - only large movements)
 
+# Device Information
+DEVICE_INFO = {
+    "device_name": "Raspberry Pi v5",
+    "camera": "Raspberry Pi Camera Module 3 12MP",
+    "model": "RPI-001"
+}
+
 # Convert threshold level to actual distance threshold
 # Level 1 = 0.2 (very strict), Level 10 = 0.8 (very lenient)
 DISTANCE_THRESHOLD = 0.2 + (DISTANCE_THRESHOLD_LEVEL - 1) * 0.067  # Maps 1-10 to 0.2-0.8
@@ -202,7 +209,8 @@ def send_unknown_face(face_image):
             face_image_base64=face_image_base64,
             timestamp=datetime.now(),
             location="raspberry_pi_camera",
-            confidence=0.8
+            confidence=0.8,
+            device_info=DEVICE_INFO
         )
         
         if success:
@@ -248,7 +256,8 @@ def send_known_face(face_image, name, confidence):
             name=name,
             timestamp=datetime.now(),
             location="raspberry_pi_camera",
-            confidence=confidence
+            confidence=confidence,
+            device_info=DEVICE_INFO
         )
         
         if success:
@@ -294,7 +303,8 @@ def detect_motion(frame):
                                 timestamp=datetime.now(),
                                 location="raspberry_pi_camera",
                                 confidence=min(1.0, area / (frame.shape[0] * frame.shape[1])),
-                                captured_photo=motion_base64
+                                captured_photo=motion_base64,
+                                device_info=DEVICE_INFO
                             )
                             if success:
                                 last_motion_time = current_time

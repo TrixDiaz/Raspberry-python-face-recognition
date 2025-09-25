@@ -44,7 +44,7 @@ class FirebaseService:
             logger.error(f"Failed to initialize Firebase: {str(e)}")
             raise
     
-    def save_motion_detection(self, timestamp=None, location="default", confidence=1.0, captured_photo=None):
+    def save_motion_detection(self, timestamp=None, location="default", confidence=1.0, captured_photo=None, device_info=None):
         """
         Save motion detection event to Firebase.
         
@@ -53,6 +53,7 @@ class FirebaseService:
             location: Location identifier
             confidence: Confidence level of motion detection
             captured_photo: Base64 encoded captured photo (optional)
+            device_info: Device information dictionary (optional)
         """
         try:
             if not self.db:
@@ -74,6 +75,10 @@ class FirebaseService:
             if captured_photo:
                 motion_data["captured_photo"] = captured_photo
             
+            # Add device information if provided
+            if device_info:
+                motion_data["device_info"] = device_info
+            
             # Add to motion_logs collection (renamed from motion_detections)
             doc_ref = self.db.collection('motion_logs').add(motion_data)
             logger.info(f"Motion detection saved with ID: {doc_ref[1].id}")
@@ -83,7 +88,7 @@ class FirebaseService:
             logger.error(f"Failed to save motion detection: {str(e)}")
             return False
     
-    def save_unknown_face(self, face_image_base64, timestamp=None, location="default", confidence=0.0):
+    def save_unknown_face(self, face_image_base64, timestamp=None, location="default", confidence=0.0, device_info=None):
         """
         Save unknown face detection event to Firebase.
         
@@ -92,6 +97,7 @@ class FirebaseService:
             timestamp: When the face was detected (defaults to now)
             location: Location identifier
             confidence: Confidence level of face detection
+            device_info: Device information dictionary (optional)
         """
         try:
             if not self.db:
@@ -111,6 +117,10 @@ class FirebaseService:
                 "status": "pending_review"
             }
             
+            # Add device information if provided
+            if device_info:
+                face_data["device_info"] = device_info
+            
             # Add to face_detections collection
             doc_ref = self.db.collection('face_detections').add(face_data)
             logger.info(f"Unknown face saved with ID: {doc_ref[1].id}")
@@ -120,7 +130,7 @@ class FirebaseService:
             logger.error(f"Failed to save unknown face: {str(e)}")
             return False
     
-    def save_known_face(self, face_image_base64, name, timestamp=None, location="default", confidence=1.0):
+    def save_known_face(self, face_image_base64, name, timestamp=None, location="default", confidence=1.0, device_info=None):
         """
         Save known face detection event to Firebase.
         
@@ -130,6 +140,7 @@ class FirebaseService:
             timestamp: When the face was detected (defaults to now)
             location: Location identifier
             confidence: Confidence level of face detection
+            device_info: Device information dictionary (optional)
         """
         try:
             if not self.db:
@@ -149,6 +160,10 @@ class FirebaseService:
                 "processed": False,
                 "status": "recognized"
             }
+            
+            # Add device information if provided
+            if device_info:
+                face_data["device_info"] = device_info
             
             # Add to face_detections collection
             doc_ref = self.db.collection('face_detections').add(face_data)

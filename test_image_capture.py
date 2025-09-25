@@ -65,12 +65,20 @@ def test_motion_detection_save():
             logger.error("❌ Failed to encode test image")
             return False
         
+        # Device information
+        device_info = {
+            "device_name": "Raspberry Pi v5",
+            "camera": "Raspberry Pi Camera Module 3 12MP",
+            "model": "RPI-001"
+        }
+        
         # Save motion detection
         success = firebase_service.save_motion_detection(
             timestamp=datetime.now(),
             location="test_camera",
             confidence=0.95,
-            captured_photo=encoded_image
+            captured_photo=encoded_image,
+            device_info=device_info
         )
         
         if success:
@@ -98,12 +106,20 @@ def test_unknown_face_save():
             logger.error("❌ Failed to encode test face image")
             return False
         
+        # Device information
+        device_info = {
+            "device_name": "Raspberry Pi v5",
+            "camera": "Raspberry Pi Camera Module 3 12MP",
+            "model": "RPI-001"
+        }
+        
         # Save unknown face
         success = firebase_service.save_unknown_face(
             face_image_base64=encoded_face,
             timestamp=datetime.now(),
             location="test_camera",
-            confidence=0.8
+            confidence=0.8,
+            device_info=device_info
         )
         
         if success:
@@ -131,13 +147,21 @@ def test_known_face_save():
             logger.error("❌ Failed to encode test face image")
             return False
         
+        # Device information
+        device_info = {
+            "device_name": "Raspberry Pi v5",
+            "camera": "Raspberry Pi Camera Module 3 12MP",
+            "model": "RPI-001"
+        }
+        
         # Save known face
         success = firebase_service.save_known_face(
             face_image_base64=encoded_face,
             name="Test_Person",
             timestamp=datetime.now(),
             location="test_camera",
-            confidence=0.95
+            confidence=0.95,
+            device_info=device_info
         )
         
         if success:
