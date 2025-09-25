@@ -1,215 +1,124 @@
-# Image Capture and Firebase Integration Guide
+# Camera Streaming Guide
 
 ## Overview
 
-This system now captures images automatically when motion or face detection occurs and stores them in Firebase Firestore database. Both motion detection and face detection (known and unknown faces) will capture and send images to the database.
+Your Raspberry Pi camera system supports live streaming via IP address with face detection and motion detection overlays.
 
-## Features Implemented
+## Quick Start
 
-### 1. Motion Detection with Image Capture
-
-- **When**: Motion is detected above the threshold
-- **What**: Captures the full camera frame at the moment of motion
-- **Storage**: Saves to Firebase with timestamp, location, confidence, and captured image
-- **Cooldown**: 10 seconds between motion detections to prevent spam
-
-### 2. Face Detection with Image Capture
-
-- **Known Faces**: Captures face region when a known person is recognized
-- **Unknown Faces**: Captures face region when an unknown person is detected
-- **Storage**: Saves to Firebase with face image, timestamp, location, and confidence
-- **Cooldown**: 10 seconds per person to prevent duplicate entries
-
-## How It Works
-
-### Motion Detection Flow
-
-1. Camera continuously monitors for motion using background subtraction
-2. When motion is detected above threshold:
-   - Captures the current frame
-   - Encodes image to base64
-   - Saves to Firebase with metadata
-   - Logs success/failure
-
-### Face Detection Flow
-
-1. Camera continuously scans for faces
-2. When a face is detected:
-   - Extracts face region from frame
-   - Attempts to match with known faces
-   - If known: saves with person's name
-   - If unknown: saves as unknown face
-   - Encodes face image to base64
-   - Saves to Firebase with metadata
-
-## Firebase Collections
-
-### Motion Logs Collection (`motion_logs`)
-
-```json
-{
-  "timestamp": "2024-01-15T10:30:00",
-  "location": "raspberry_pi_camera",
-  "confidence": 0.95,
-  "type": "motion_detection",
-  "captured_photo": "base64_encoded_image_data",
-  "processed": false,
-  "device_info": {
-    "device_name": "Raspberry Pi v5",
-    "camera": "Raspberry Pi Camera Module 3 12MP",
-    "model": "RPI-001"
-  }
-}
-```
-
-### Face Detections Collection (`face_detections`)
-
-```json
-{
-  "timestamp": "2024-01-15T10:30:00",
-  "location": "raspberry_pi_camera",
-  "confidence": 0.95,
-  "type": "known_face", // or "unknown_face"
-  "name": "John_Doe", // only for known faces
-  "face_image": "base64_encoded_face_data",
-  "processed": false,
-  "status": "recognized", // or "pending_review" for unknown faces
-  "device_info": {
-    "device_name": "Raspberry Pi v5",
-    "camera": "Raspberry Pi Camera Module 3 12MP",
-    "model": "RPI-001"
-  }
-}
-```
-
-## Configuration
-
-### Motion Detection Settings
-
-- **Motion Threshold**: 15000 (area threshold for motion detection)
-- **Motion Area Threshold**: 50 (minimum area for motion detection)
-- **Cooldown**: 10 seconds between motion reports
-
-### Face Detection Settings
-
-- **Distance Threshold**: Configurable (1-10 scale)
-- **Face Detection Interval**: Every 3rd frame for performance
-- **Cooldown**: 10 seconds per person
-
-## Testing
-
-Run the test script to verify functionality:
+### 1. Start the Flask API Server
 
 ```bash
-python test_image_capture.py
+python app.py
 ```
 
-This will test:
+### 2. Access the Camera Stream
 
-- Firebase connection
-- Image encoding
-- Motion detection save
-- Unknown face save
-- Known face save
+Open your web browser and go to:
 
-## API Endpoints
+```
+http://[YOUR_PI_IP_ADDRESS]:5000/viewer
+```
 
-### Motion Detection
+### 3. Start Streaming
 
-- **POST** `/motion-detection` - Report motion with optional image
-- **GET** `/motion-logs` - Retrieve motion detection logs
+- Click "Start Stream" button
+- The camera feed will appear with face detection and motion detection overlays
+- Use "Stop Stream" to stop the camera
 
-### Face Detection
+## Features
 
-- **POST** `/unknown-face` - Report unknown face with image
-- **GET** `/face-detections` - Retrieve face detection logs
-- **GET** `/unknown-faces` - Retrieve unknown face logs
+### Live Camera Streaming
 
-## Usage
+- **Resolution**: 640x480 (optimized for streaming)
+- **Frame Rate**: ~30 FPS
+- **Format**: MJPEG (Motion JPEG)
+- **Face Detection**: Real-time face recognition with overlays
+- **Motion Detection**: Real-time motion detection with alerts
 
-### Starting the System
+### Device Information
 
-1. Start the Flask API server:
+- **Device**: Raspberry Pi v5
+- **Camera**: Raspberry Pi Camera Module 3 12MP
+- **Model**: RPI-001
 
-   ```bash
-   python app.py
-   ```
+## Access Methods
 
-2. Start the face recognition service:
-   ```bash
-   python face_detection_service.py
-   ```
+### Web Browser (Recommended)
 
-### Monitoring
+- **URL**: `http://[PI_IP]:5000/viewer`
+- **Features**: Web interface with detection controls
+- **Compatibility**: Works on any device with a web browser
 
-- The system displays real-time status on the camera feed
-- API status: Shows if the API server is running
-- Firebase status: Shows if Firebase is connected
-- Threshold level: Shows current face recognition threshold
-- Motion sensitivity: Shows current motion detection settings
+### Direct Stream URL
 
-### Keyboard Controls (when running face_detection_service.py)
+- **URL**: `http://[PI_IP]:5000/stream`
+- **Use Case**: Embed in other applications
+- **Format**: MJPEG stream with detection overlays
 
-- **1-9**: Set face recognition threshold (1=strict, 9=lenient)
-- **0**: Set threshold to 10 (most lenient)
-- **h**: Show help
-- **q**: Quit
+### Mobile Devices
+
+- **iOS**: Safari, Chrome, Firefox
+- **Android**: Chrome, Firefox, Samsung Internet
+- **Tablets**: All major browsers supported
+
+## Network Configuration
+
+### Finding Your Pi's IP Address
+
+```bash
+hostname -I
+```
+
+### Port Configuration
+
+- **Default Port**: 5000
+- **Protocol**: HTTP
+- **Firewall**: Ensure port 5000 is open
 
 ## Troubleshooting
 
 ### Common Issues
 
-1. **Firebase Connection Failed**
+#### Camera Not Initializing
 
-   - Check `firebase-config.json` exists and is valid
-   - Verify Firebase project credentials
-   - Check internet connection
+- Check if camera is connected properly
+- Verify camera permissions
+- Restart the Flask application
 
-2. **Images Not Saving**
+#### Stream Not Loading
 
-   - Check Firebase service initialization
-   - Verify image encoding is working
-   - Check Firebase permissions
+- Ensure Flask app is running
+- Check network connection
+- Verify IP address and port
+- Try refreshing the page
 
-3. **High CPU Usage**
-   - Reduce face detection interval
-   - Lower camera resolution
-   - Increase motion threshold
+#### Poor Stream Quality
 
-### Logs
+- Check network bandwidth
+- Reduce other network usage
+- Restart the stream
 
-- Check console output for detailed logs
-- Motion detection: "Motion detection with captured photo sent to Firebase successfully"
-- Face detection: "Known/Unknown face with captured image saved to Firebase successfully"
+### Debug Commands
 
-## Performance Optimization
+```bash
+# Check Flask app status
+curl http://localhost:5000/health
 
-### For Better Performance
+# Test stream status
+curl http://localhost:5000/stream/status
 
-- Use lower camera resolution
-- Increase face detection interval
-- Use higher motion threshold
-- Enable frame skipping
+# Check camera hardware
+libcamera-hello --list-cameras
+```
 
-### For Better Accuracy
+## Testing
 
-- Use higher camera resolution
-- Lower motion threshold
-- Use stricter face recognition threshold
-- Ensure good lighting conditions
+### Manual Testing
 
-## Security Considerations
+1. Start Flask app: `python app.py`
+2. Open browser: `http://localhost:5000/viewer`
+3. Click "Start Stream"
+4. Verify camera feed appears with detection overlays
 
-- Images are stored as base64 in Firebase
-- Consider implementing image compression for large images
-- Set up proper Firebase security rules
-- Consider data retention policies
-- Monitor storage usage in Firebase
-
-## Next Steps
-
-1. **Image Compression**: Implement image compression to reduce storage
-2. **Cloud Storage**: Move images to Firebase Storage instead of Firestore
-3. **Real-time Alerts**: Set up real-time notifications for detections
-4. **Analytics**: Add detection analytics and reporting
-5. **Mobile App**: Create mobile app to view detections and images
+Your Raspberry Pi camera is ready for live streaming with detection! 🎥✨

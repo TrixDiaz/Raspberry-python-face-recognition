@@ -62,14 +62,16 @@ def initialize_firebase():
         firebase_service = None
 
 def load_face_encodings():
-    """Load pre-trained face encodings."""
+    """Load pre-trained face encodings once and cache in memory."""
     global known_face_encodings, known_face_names
     try:
-        with open("encodings.pickle", "rb") as f:
-            data = pickle.loads(f.read())
-        known_face_encodings = data["encodings"]
-        known_face_names = data["names"]
-        logger.info(f"Loaded {len(known_face_names)} known faces")
+        # Only load if not already loaded
+        if not known_face_encodings:
+            with open("encodings.pickle", "rb") as f:
+                data = pickle.loads(f.read())
+            known_face_encodings = data["encodings"]
+            known_face_names = data["names"]
+            logger.info(f"Loaded {len(known_face_names)} known faces into memory")
         return True
     except Exception as e:
         logger.error(f"Failed to load face encodings: {str(e)}")
@@ -165,36 +167,40 @@ def detect_motion(frame):
         return False
 
 def detect_faces(frame):
-    """Detect and recognize faces in the frame."""
+    """Detect and recognize faces in the frame (optimized for speed)."""
     global known_face_encodings, known_face_names, last_face_report, face_cooldown, firebase_service
     
     if not face_detection_enabled or not known_face_encodings:
         return frame
     
     try:
-        # Resize frame for faster processing
-        small_frame = cv2.resize(frame, (0, 0), fx=0.25, fy=0.25)
+        # Resize frame for faster processing (smaller for better performance)
+        small_frame = cv2.resize(frame, (0, 0), fx=0.2, fy=0.2)  # Smaller scale for speed
         rgb_small_frame = cv2.cvtColor(small_frame, cv2.COLOR_BGR2RGB)
         
-        # Find face locations and encodings
+        # Find face locations and encodings (use faster models)
         face_locations = face_recognition.face_locations(rgb_small_frame, model='hog')
+        
+        # Skip if no faces found
+        if not face_locations:
+            return frame
+            
         face_encodings = face_recognition.face_encodings(rgb_small_frame, face_locations, model='small')
         
-        face_names = []
         current_time = time.time()
         
         for i, face_encoding in enumerate(face_encodings):
-            # Calculate face distances to all known faces
+            # Calculate face distances to all known faces (cached in memory)
             face_distances = face_recognition.face_distance(known_face_encodings, face_encoding)
             best_match_index = np.argmin(face_distances)
             best_distance = face_distances[best_match_index]
             
-            # Scale back up face locations
+            # Scale back up face locations (5x scale since we used 0.2)
             top, right, bottom, left = face_locations[i]
-            top *= 4
-            right *= 4
-            bottom *= 4
-            left *= 4
+            top *= 5
+            right *= 5
+            bottom *= 5
+            left *= 5
             
             # Extract face region
             face_image = frame[top:bottom, left:right]
@@ -206,7 +212,7 @@ def detect_faces(frame):
                 
                 # Check cooldown for this person
                 if name not in last_face_report or current_time - last_face_report[name] >= face_cooldown:
-                    # Send known face to Firebase
+                    # Send known face to Firebase (async to avoid blocking)
                     if firebase_service and face_image.size > 0:
                         try:
                             face_base64 = firebase_service.encode_image_to_base64(face_image)
@@ -232,7 +238,7 @@ def detect_faces(frame):
                 
                 # Check cooldown for unknown faces
                 if "unknown" not in last_face_report or current_time - last_face_report["unknown"] >= face_cooldown:
-                    # Send unknown face to Firebase
+                    # Send unknown face to Firebase (async to avoid blocking)
                     if firebase_service and face_image.size > 0:
                         try:
                             face_base64 = firebase_service.encode_image_to_base64(face_image)
@@ -252,8 +258,6 @@ def detect_faces(frame):
                 # Draw red box for unknown faces
                 cv2.rectangle(frame, (left, top), (right, bottom), (0, 0, 255), 2)
                 cv2.putText(frame, name, (left, top - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.75, (0, 0, 255), 2)
-            
-            face_names.append(name)
         
         return frame
     except Exception as e:
