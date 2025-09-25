@@ -85,6 +85,19 @@
             background-color: #0b7dda;
         }
 
+        .detection-btn {
+            background-color: #ff9800;
+            color: white;
+        }
+
+        .detection-btn:hover {
+            background-color: #f57c00;
+        }
+
+        .detection-btn.off {
+            background-color: #9e9e9e;
+        }
+
         .status {
             text-align: center;
             padding: 15px;
@@ -160,6 +173,12 @@
             <button class="start-btn" onclick="startStream()">▶️ Start Stream</button>
             <button class="stop-btn" onclick="stopStream()">⏹️ Stop Stream</button>
             <button class="status-btn" onclick="checkStatus()">📊 Check Status</button>
+        </div>
+
+        <div class="controls">
+            <button class="detection-btn" id="faceToggle" onclick="toggleFaceDetection()">👤 Face Detection: ON</button>
+            <button class="detection-btn" id="motionToggle" onclick="toggleMotionDetection()">🏃 Motion Detection:
+                ON</button>
         </div>
 
         <div id="status" class="status offline">
@@ -254,9 +273,59 @@
                         streamElement.style.display = 'none';
                         streamActive = false;
                     }
+
+                    // Update detection buttons
+                    updateDetectionButtons(data);
                 })
                 .catch(error => {
                     updateStatus(`Error: ${error.message}`, false);
+                });
+        }
+
+        function updateDetectionButtons(data) {
+            const faceToggle = document.getElementById('faceToggle');
+            const motionToggle = document.getElementById('motionToggle');
+
+            if (data.face_detection) {
+                faceToggle.textContent = '👤 Face Detection: ON';
+                faceToggle.classList.remove('off');
+            } else {
+                faceToggle.textContent = '👤 Face Detection: OFF';
+                faceToggle.classList.add('off');
+            }
+
+            if (data.motion_detection) {
+                motionToggle.textContent = '🏃 Motion Detection: ON';
+                motionToggle.classList.remove('off');
+            } else {
+                motionToggle.textContent = '🏃 Motion Detection: OFF';
+                motionToggle.classList.add('off');
+            }
+        }
+
+        function toggleFaceDetection() {
+            fetch('/detection/face/toggle', { method: 'POST' })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        updateDetectionButtons({ face_detection: data.face_detection_enabled, motion_detection: true });
+                    }
+                })
+                .catch(error => {
+                    console.error('Error toggling face detection:', error);
+                });
+        }
+
+        function toggleMotionDetection() {
+            fetch('/detection/motion/toggle', { method: 'POST' })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        updateDetectionButtons({ face_detection: true, motion_detection: data.motion_detection_enabled });
+                    }
+                })
+                .catch(error => {
+                    console.error('Error toggling motion detection:', error);
                 });
         }
 
