@@ -1,0 +1,526 @@
+#!/usr/bin/env python3
+"""
+Standalone Camera Streaming Script
+This script provides camera streaming functionality without Flask API or Firebase dependencies.
+It runs a simple HTTP server to serve the camera stream and a basic HTML viewer.
+"""
+
+import cv2
+import threading
+import time
+import logging
+from picamera2 import Picamera2
+from http.server import HTTPServer, BaseHTTPRequestHandler
+import io
+import json
+from datetime import datetime
+import face_recognition
+import numpy as np
+import pickle
+import os
+
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+# Global variables
+camera = None
+streaming_active = False
+known_face_encodings = []
+known_face_names = []
+face_detection_enabled = True
+motion_detection_enabled = True
+background_subtractor = None
+last_motion_time = 0
+motion_cooldown = 10  # seconds
+last_face_report = {}
+face_cooldown = 10  # seconds
+
+# Device Information
+DEVICE_INFO = {
+    "device_name": "Raspberry Pi v5",
+    "camera": "Raspberry Pi Camera Module 3 12MP",
+    "model": "RPI-001"
+}
+
+def load_face_encodings():
+    """Load pre-trained face encodings if available."""
+    global known_face_encodings, known_face_names
+    try:
+        if os.path.exists("encodings.pickle"):
+            with open("encodings.pickle", "rb") as f:
+                data = pickle.loads(f.read())
+            known_face_encodings = data["encodings"]
+            known_face_names = data["names"]
+            logger.info(f"Loaded {len(known_face_names)} known faces")
+            return True
+        else:
+            logger.info("No face encodings file found - face recognition disabled")
+            return False
+    except Exception as e:
+        logger.error(f"Failed to load face encodings: {str(e)}")
+        return False
+
+def initialize_detection():
+    """Initialize face detection and motion detection."""
+    global background_subtractor
+    try:
+        # Initialize background subtractor for motion detection
+        background_subtractor = cv2.createBackgroundSubtractorMOG2(detectShadows=True)
+        
+        # Load face encodings
+        load_face_encodings()
+        
+        logger.info("Detection systems initialized")
+        return True
+    except Exception as e:
+        logger.error(f"Failed to initialize detection: {str(e)}")
+        return False
+
+def initialize_camera():
+    """Initialize camera for streaming."""
+    global camera, streaming_active
+    try:
+        if camera is None:
+            camera = Picamera2()
+            camera_config = camera.create_preview_configuration()
+            camera_config["main"]["size"] = (640, 480)  # Lower resolution for streaming
+            camera_config["main"]["format"] = "RGB888"
+            camera.configure(camera_config)
+            camera.start()
+            streaming_active = True
+            
+            # Initialize detection systems
+            initialize_detection()
+            
+            logger.info("Camera initialized for streaming with detection")
+        return True
+    except Exception as e:
+        logger.error(f"Failed to initialize camera: {str(e)}")
+        return False
+
+def detect_motion(frame):
+    """Detect motion in the frame (without Firebase upload)."""
+    global background_subtractor, last_motion_time, motion_cooldown
+    
+    if not motion_detection_enabled or background_subtractor is None:
+        return False
+    
+    try:
+        # Apply background subtraction
+        fg_mask = background_subtractor.apply(frame)
+        
+        # Remove noise
+        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
+        fg_mask = cv2.morphologyEx(fg_mask, cv2.MORPH_OPEN, kernel)
+        
+        # Find contours
+        contours, _ = cv2.findContours(fg_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        
+        # Check for significant motion
+        motion_detected = False
+        current_time = time.time()
+        
+        for contour in contours:
+            area = cv2.contourArea(contour)
+            if area > 50:  # Motion threshold
+                motion_detected = True
+                if current_time - last_motion_time >= motion_cooldown:
+                    logger.info("Motion detected (not uploaded to Firebase)")
+                    last_motion_time = current_time
+                break
+        
+        return motion_detected
+    except Exception as e:
+        logger.error(f"Error in motion detection: {str(e)}")
+        return False
+
+def detect_faces(frame):
+    """Detect and recognize faces in the frame (without Firebase upload)."""
+    global known_face_encodings, known_face_names, last_face_report, face_cooldown
+    
+    if not face_detection_enabled or not known_face_encodings:
+        return frame
+    
+    try:
+        # Resize frame for faster processing
+        small_frame = cv2.resize(frame, (0, 0), fx=0.2, fy=0.2)
+        rgb_small_frame = cv2.cvtColor(small_frame, cv2.COLOR_BGR2RGB)
+        
+        # Find face locations and encodings
+        face_locations = face_recognition.face_locations(rgb_small_frame, model='hog')
+        
+        if not face_locations:
+            return frame
+            
+        face_encodings = face_recognition.face_encodings(rgb_small_frame, face_locations, model='small')
+        
+        current_time = time.time()
+        
+        for i, face_encoding in enumerate(face_encodings):
+            # Calculate face distances to all known faces
+            face_distances = face_recognition.face_distance(known_face_encodings, face_encoding)
+            best_match_index = np.argmin(face_distances)
+            best_distance = face_distances[best_match_index]
+            
+            # Scale back up face locations
+            top, right, bottom, left = face_locations[i]
+            top *= 5
+            right *= 5
+            bottom *= 5
+            left *= 5
+            
+            # Process face detection result
+            if best_distance <= 0.6:  # Distance threshold
+                name = known_face_names[best_match_index]
+                confidence = 1.0 - best_distance
+                
+                # Check cooldown for this person
+                if name not in last_face_report or current_time - last_face_report[name] >= face_cooldown:
+                    logger.info(f"Known face detected: {name} (not uploaded to Firebase)")
+                    last_face_report[name] = current_time
+                
+                # Draw green box for known faces
+                cv2.rectangle(frame, (left, top), (right, bottom), (0, 255, 0), 2)
+                cv2.putText(frame, name, (left, top - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.75, (0, 255, 0), 2)
+            else:
+                name = "Unknown"
+                
+                # Check cooldown for unknown faces
+                if "unknown" not in last_face_report or current_time - last_face_report["unknown"] >= face_cooldown:
+                    logger.info("Unknown face detected (not uploaded to Firebase)")
+                    last_face_report["unknown"] = current_time
+                
+                # Draw red box for unknown faces
+                cv2.rectangle(frame, (left, top), (right, bottom), (0, 0, 255), 2)
+                cv2.putText(frame, name, (left, top - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.75, (0, 0, 255), 2)
+        
+        return frame
+    except Exception as e:
+        logger.error(f"Error in face detection: {str(e)}")
+        return frame
+
+def generate_frames():
+    """Generate camera frames for streaming with detection overlays."""
+    global camera, streaming_active
+    
+    while streaming_active:
+        try:
+            if camera is not None:
+                # Capture frame from camera
+                frame = camera.capture_array()
+                
+                # Convert RGB to BGR for OpenCV
+                frame_bgr = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
+                
+                # Detect motion
+                motion_detected = detect_motion(frame_bgr)
+                
+                # Detect faces
+                frame_bgr = detect_faces(frame_bgr)
+                
+                # Add motion indicator
+                if motion_detected:
+                    cv2.putText(frame_bgr, "MOTION DETECTED", (10, 30), 
+                               cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
+                
+                # Add status information
+                cv2.putText(frame_bgr, "Face Detection: ON", (10, frame_bgr.shape[0] - 60), 
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
+                cv2.putText(frame_bgr, "Motion Detection: ON", (10, frame_bgr.shape[0] - 40), 
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
+                cv2.putText(frame_bgr, "Standalone Mode", (10, frame_bgr.shape[0] - 20), 
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+                
+                # Encode frame as JPEG
+                ret, buffer = cv2.imencode('.jpg', frame_bgr, [cv2.IMWRITE_JPEG_QUALITY, 85])
+                if ret:
+                    frame_bytes = buffer.tobytes()
+                    yield (b'--frame\r\n'
+                           b'Content-Type: image/jpeg\r\n\r\n' + frame_bytes + b'\r\n')
+                else:
+                    logger.warning("Failed to encode frame")
+            else:
+                # Send a placeholder frame if camera is not available
+                placeholder = cv2.zeros((480, 640, 3), dtype=cv2.uint8)
+                cv2.putText(placeholder, "Camera Not Available", (200, 240), 
+                           cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
+                
+                ret, buffer = cv2.imencode('.jpg', placeholder, [cv2.IMWRITE_JPEG_QUALITY, 85])
+                if ret:
+                    frame_bytes = buffer.tobytes()
+                    yield (b'--frame\r\n'
+                           b'Content-Type: image/jpeg\r\n\r\n' + frame_bytes + b'\r\n')
+            
+            time.sleep(0.033)  # ~30 FPS
+        except Exception as e:
+            logger.error(f"Error generating frame: {str(e)}")
+            time.sleep(0.1)
+
+class StreamHandler(BaseHTTPRequestHandler):
+    """HTTP request handler for the camera stream."""
+    
+    def do_GET(self):
+        """Handle GET requests."""
+        if self.path == '/stream':
+            self.send_response(200)
+            self.send_header('Content-Type', 'multipart/x-mixed-replace; boundary=frame')
+            self.end_headers()
+            
+            try:
+                for frame in generate_frames():
+                    self.wfile.write(frame)
+            except Exception as e:
+                logger.error(f"Stream error: {str(e)}")
+                
+        elif self.path == '/status':
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json')
+            self.end_headers()
+            
+            status = {
+                "streaming": streaming_active,
+                "camera_initialized": camera is not None,
+                "face_detection": face_detection_enabled,
+                "motion_detection": motion_detection_enabled,
+                "known_faces_count": len(known_face_names) if known_face_names else 0,
+                "mode": "standalone",
+                "timestamp": datetime.now().isoformat()
+            }
+            
+            self.wfile.write(json.dumps(status).encode())
+            
+        elif self.path == '/':
+            # Serve the HTML viewer
+            self.send_response(200)
+            self.send_header('Content-Type', 'text/html')
+            self.end_headers()
+            
+            html_content = """
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Raspberry Pi Camera Stream - Standalone Mode</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background-color: #1a1a1a;
+            color: white;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+        .header {
+            text-align: center;
+            margin-bottom: 20px;
+        }
+        .stream-container {
+            text-align: center;
+            margin-bottom: 20px;
+        }
+        .stream-image {
+            max-width: 100%;
+            height: auto;
+            border: 2px solid #333;
+            border-radius: 8px;
+        }
+        .status {
+            background-color: #2a2a2a;
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+        }
+        .status-item {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 10px;
+        }
+        .status-label {
+            font-weight: bold;
+        }
+        .status-value {
+            color: #4CAF50;
+        }
+        .controls {
+            background-color: #2a2a2a;
+            padding: 15px;
+            border-radius: 8px;
+            text-align: center;
+        }
+        .btn {
+            background-color: #4CAF50;
+            color: white;
+            padding: 10px 20px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            margin: 5px;
+            font-size: 16px;
+        }
+        .btn:hover {
+            background-color: #45a049;
+        }
+        .btn:disabled {
+            background-color: #666;
+            cursor: not-allowed;
+        }
+        .info {
+            background-color: #2a2a2a;
+            padding: 15px;
+            border-radius: 8px;
+            margin-top: 20px;
+        }
+        .warning {
+            background-color: #ff9800;
+            color: black;
+            padding: 10px;
+            border-radius: 4px;
+            margin-bottom: 20px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🎥 Raspberry Pi Camera Stream</h1>
+            <h2>Standalone Mode</h2>
+        </div>
+        
+        <div class="warning">
+            <strong>⚠️ Standalone Mode:</strong> This camera stream is running independently without the main Flask API or Firebase connectivity. Face detection and motion detection are active but data is not being uploaded to Firebase.
+        </div>
+        
+        <div class="stream-container">
+            <img src="/stream" alt="Camera Stream" class="stream-image" id="streamImage">
+        </div>
+        
+        <div class="status" id="status">
+            <h3>📊 System Status</h3>
+            <div class="status-item">
+                <span class="status-label">Streaming:</span>
+                <span class="status-value" id="streamingStatus">Loading...</span>
+            </div>
+            <div class="status-item">
+                <span class="status-label">Camera:</span>
+                <span class="status-value" id="cameraStatus">Loading...</span>
+            </div>
+            <div class="status-item">
+                <span class="status-label">Face Detection:</span>
+                <span class="status-value" id="faceDetectionStatus">Loading...</span>
+            </div>
+            <div class="status-item">
+                <span class="status-label">Motion Detection:</span>
+                <span class="status-value" id="motionDetectionStatus">Loading...</span>
+            </div>
+            <div class="status-item">
+                <span class="status-label">Known Faces:</span>
+                <span class="status-value" id="knownFacesCount">Loading...</span>
+            </div>
+        </div>
+        
+        <div class="controls">
+            <button class="btn" onclick="refreshStatus()">🔄 Refresh Status</button>
+            <button class="btn" onclick="reloadStream()">🔄 Reload Stream</button>
+        </div>
+        
+        <div class="info">
+            <h3>ℹ️ Information</h3>
+            <p><strong>Device:</strong> Raspberry Pi v5</p>
+            <p><strong>Camera:</strong> Raspberry Pi Camera Module 3 12MP</p>
+            <p><strong>Resolution:</strong> 640x480</p>
+            <p><strong>Frame Rate:</strong> ~30 FPS</p>
+            <p><strong>Mode:</strong> Standalone (No Firebase/API)</p>
+        </div>
+    </div>
+
+    <script>
+        function refreshStatus() {
+            fetch('/status')
+                .then(response => response.json())
+                .then(data => {
+                    document.getElementById('streamingStatus').textContent = data.streaming ? 'Active' : 'Inactive';
+                    document.getElementById('cameraStatus').textContent = data.camera_initialized ? 'Initialized' : 'Not Initialized';
+                    document.getElementById('faceDetectionStatus').textContent = data.face_detection ? 'Enabled' : 'Disabled';
+                    document.getElementById('motionDetectionStatus').textContent = data.motion_detection ? 'Enabled' : 'Disabled';
+                    document.getElementById('knownFacesCount').textContent = data.known_faces_count;
+                })
+                .catch(error => {
+                    console.error('Error fetching status:', error);
+                });
+        }
+        
+        function reloadStream() {
+            const img = document.getElementById('streamImage');
+            img.src = '/stream?' + new Date().getTime();
+        }
+        
+        // Auto-refresh status every 5 seconds
+        setInterval(refreshStatus, 5000);
+        
+        // Initial status check
+        refreshStatus();
+    </script>
+</body>
+</html>
+            """
+            
+            self.wfile.write(html_content.encode())
+        else:
+            self.send_response(404)
+            self.end_headers()
+            self.wfile.write(b'Not Found')
+    
+    def log_message(self, format, *args):
+        """Override to reduce log noise."""
+        pass
+
+def start_server(host='0.0.0.0', port=8080):
+    """Start the standalone streaming server."""
+    global streaming_active
+    
+    try:
+        # Initialize camera
+        if not initialize_camera():
+            logger.error("Failed to initialize camera")
+            return False
+        
+        # Start streaming
+        streaming_active = True
+        
+        # Create and start HTTP server
+        server = HTTPServer((host, port), StreamHandler)
+        logger.info(f"🎥 Standalone camera streaming server started")
+        logger.info(f"📡 Server running on http://{host}:{port}")
+        logger.info(f"📹 Stream URL: http://{host}:{port}/stream")
+        logger.info(f"📊 Status URL: http://{host}:{port}/status")
+        logger.info(f"🌐 Viewer: http://{host}:{port}/")
+        logger.info("⚠️  Running in standalone mode - no Firebase/API connectivity")
+        
+        try:
+            server.serve_forever()
+        except KeyboardInterrupt:
+            logger.info("Shutting down server...")
+            streaming_active = False
+            if camera is not None:
+                camera.stop()
+                camera = None
+            server.shutdown()
+            logger.info("Server stopped")
+            
+    except Exception as e:
+        logger.error(f"Failed to start server: {str(e)}")
+        return False
+
+if __name__ == '__main__':
+    print("🎥 Raspberry Pi Standalone Camera Stream")
+    print("=" * 50)
+    print("This script provides camera streaming without Flask API or Firebase")
+    print("=" * 50)
+    
+    # Start the server
+    start_server()
