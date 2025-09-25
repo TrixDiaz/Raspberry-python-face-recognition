@@ -1,8 +1,13 @@
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, Response
 from flask_cors import CORS
 import logging
 from datetime import datetime
 import traceback
+import cv2
+import threading
+import time
+from picamera2 import Picamera2
+import io
 
 from firebase_service import get_firebase_service
 
@@ -17,6 +22,12 @@ CORS(app)  # Enable CORS for all routes
 # Global Firebase service instance
 firebase_service = None
 
+# Global camera instance for streaming
+camera = None
+camera_lock = threading.Lock()
+frame_buffer = None
+streaming_active = False
+
 def initialize_firebase():
     """Initialize Firebase service on first request."""
     global firebase_service
@@ -26,6 +37,65 @@ def initialize_firebase():
     except Exception as e:
         logger.error(f"Failed to initialize Firebase service: {str(e)}")
         firebase_service = None
+
+def initialize_camera():
+    """Initialize camera for streaming."""
+    global camera, streaming_active
+    try:
+        if camera is None:
+            camera = Picamera2()
+            camera_config = camera.create_preview_configuration()
+            camera_config["main"]["size"] = (640, 480)  # Lower resolution for streaming
+            camera_config["main"]["format"] = "RGB888"
+            camera.configure(camera_config)
+            camera.start()
+            streaming_active = True
+            logger.info("Camera initialized for streaming")
+        return True
+    except Exception as e:
+        logger.error(f"Failed to initialize camera: {str(e)}")
+        return False
+
+def generate_frames():
+    """Generate camera frames for streaming."""
+    global camera, frame_buffer, streaming_active
+    
+    while streaming_active:
+        try:
+            if camera is not None:
+                # Capture frame from camera
+                frame = camera.capture_array()
+                
+                # Convert RGB to BGR for OpenCV
+                frame_bgr = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
+                
+                # Encode frame as JPEG
+                ret, buffer = cv2.imencode('.jpg', frame_bgr, [cv2.IMWRITE_JPEG_QUALITY, 85])
+                if ret:
+                    frame_bytes = buffer.tobytes()
+                    yield (b'--frame\r\n'
+                           b'Content-Type: image/jpeg\r\n\r\n' + frame_bytes + b'\r\n')
+                else:
+                    logger.warning("Failed to encode frame")
+            else:
+                # Send a placeholder frame if camera is not available
+                placeholder = cv2.imread('placeholder.jpg') if cv2.imread('placeholder.jpg') is not None else None
+                if placeholder is None:
+                    # Create a simple placeholder
+                    placeholder = cv2.zeros((480, 640, 3), dtype=cv2.uint8)
+                    cv2.putText(placeholder, "Camera Not Available", (200, 240), 
+                               cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
+                
+                ret, buffer = cv2.imencode('.jpg', placeholder, [cv2.IMWRITE_JPEG_QUALITY, 85])
+                if ret:
+                    frame_bytes = buffer.tobytes()
+                    yield (b'--frame\r\n'
+                           b'Content-Type: image/jpeg\r\n\r\n' + frame_bytes + b'\r\n')
+            
+            time.sleep(0.033)  # ~30 FPS
+        except Exception as e:
+            logger.error(f"Error generating frame: {str(e)}")
+            time.sleep(0.1)
 
 # Initialize Firebase when the application starts
 with app.app_context():
@@ -434,6 +504,93 @@ def mark_face_processed(doc_id):
             "message": f"Internal server error: {str(e)}"
         }), 500
 
+@app.route('/stream')
+def video_stream():
+    """Stream camera feed."""
+    global streaming_active
+    
+    # Initialize camera if not already done
+    if not streaming_active:
+        if not initialize_camera():
+            return "Camera initialization failed", 500
+    
+    return Response(generate_frames(),
+                   mimetype='multipart/x-mixed-replace; boundary=frame')
+
+@app.route('/stream/start', methods=['POST'])
+def start_stream():
+    """Start camera streaming."""
+    global streaming_active
+    
+    try:
+        if not streaming_active:
+            if initialize_camera():
+                return jsonify({
+                    "success": True,
+                    "message": "Camera streaming started",
+                    "stream_url": "/stream"
+                }), 200
+            else:
+                return jsonify({
+                    "success": False,
+                    "message": "Failed to initialize camera"
+                }), 500
+        else:
+            return jsonify({
+                "success": True,
+                "message": "Camera streaming already active",
+                "stream_url": "/stream"
+            }), 200
+    except Exception as e:
+        logger.error(f"Error starting stream: {str(e)}")
+        return jsonify({
+            "success": False,
+            "message": f"Error starting stream: {str(e)}"
+        }), 500
+
+@app.route('/stream/stop', methods=['POST'])
+def stop_stream():
+    """Stop camera streaming."""
+    global camera, streaming_active
+    
+    try:
+        streaming_active = False
+        if camera is not None:
+            camera.stop()
+            camera = None
+            logger.info("Camera streaming stopped")
+        
+        return jsonify({
+            "success": True,
+            "message": "Camera streaming stopped"
+        }), 200
+    except Exception as e:
+        logger.error(f"Error stopping stream: {str(e)}")
+        return jsonify({
+            "success": False,
+            "message": f"Error stopping stream: {str(e)}"
+        }), 500
+
+@app.route('/stream/status', methods=['GET'])
+def stream_status():
+    """Get streaming status."""
+    global streaming_active, camera
+    
+    return jsonify({
+        "streaming": streaming_active,
+        "camera_initialized": camera is not None,
+        "stream_url": "/stream" if streaming_active else None
+    }), 200
+
+@app.route('/viewer')
+def camera_viewer():
+    """Serve camera viewer HTML page."""
+    try:
+        with open('camera_viewer.html', 'r') as f:
+            return f.read()
+    except FileNotFoundError:
+        return "Camera viewer page not found", 404
+
 @app.route('/', methods=['GET'])
 def root():
     """Root endpoint with API information."""
@@ -446,7 +603,12 @@ def root():
             "unknown_face": "/unknown-face",
             "motion_logs": "/motion-logs",
             "face_detections": "/face-detections",
-            "unknown_faces": "/unknown-faces"
+            "unknown_faces": "/unknown-faces",
+            "stream": "/stream",
+            "stream_start": "/stream/start",
+            "stream_stop": "/stream/stop",
+            "stream_status": "/stream/status",
+            "camera_viewer": "/viewer"
         }
     }), 200
 
