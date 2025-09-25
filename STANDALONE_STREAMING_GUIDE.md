@@ -16,13 +16,21 @@ This guide explains how to use the standalone camera streaming functionality tha
 
 ## Quick Start
 
-### 1. Start Standalone Streaming
+### 1. Start Standalone Streaming (Recommended)
+
+```bash
+python run_standalone_safe.py
+```
+
+This script automatically handles camera conflicts and starts streaming safely.
+
+### 2. Alternative: Manual Start
 
 ```bash
 python start_standalone_stream.py
 ```
 
-### 2. Access the Camera Stream
+### 3. Access the Camera Stream
 
 Open your web browser and go to:
 
@@ -35,13 +43,28 @@ The camera feed will appear with face detection and motion detection overlays.
 ## Files
 
 - `standalone_stream.py` - Main standalone streaming server
-- `start_standalone_stream.py` - Easy startup script
+- `run_standalone_safe.py` - **Recommended**: Safe launcher with camera conflict handling
+- `start_standalone_stream.py` - Manual startup script
+- `camera_cleanup.py` - Camera process cleanup utility
 - `test_standalone_stream.py` - Test script for functionality
 - `STANDALONE_STREAMING_GUIDE.md` - This guide
 
 ## Usage
 
-### Method 1: Using the Startup Script (Recommended)
+### Method 1: Safe Launcher (Recommended)
+
+```bash
+python run_standalone_safe.py
+```
+
+This script will:
+
+- Automatically kill any existing camera processes
+- Check camera availability
+- Start the standalone streaming server safely
+- Handle camera conflicts automatically
+
+### Method 2: Manual Startup
 
 ```bash
 python start_standalone_stream.py
@@ -54,13 +77,19 @@ This script will:
 - Start the standalone streaming server
 - Display connection information
 
-### Method 2: Direct Execution
+### Method 3: Direct Execution
 
 ```bash
 python standalone_stream.py
 ```
 
-### Method 3: Testing
+### Method 4: Camera Cleanup
+
+```bash
+python camera_cleanup.py
+```
+
+### Method 5: Testing
 
 ```bash
 python test_standalone_stream.py
@@ -138,7 +167,30 @@ hostname -I
 
 ### Common Issues
 
-#### Camera Not Initializing
+#### Camera Not Initializing / Pipeline Handler in Use
+
+This error occurs when another process is already using the camera. Solutions:
+
+**Quick Fix (Recommended):**
+
+```bash
+python run_standalone_safe.py
+```
+
+**Manual Fix:**
+
+```bash
+# Stop the main app.py
+pkill -f app.py
+
+# Run camera cleanup
+python camera_cleanup.py
+
+# Start standalone streaming
+python start_standalone_stream.py
+```
+
+**Check Camera Hardware:**
 
 ```bash
 # Check camera hardware

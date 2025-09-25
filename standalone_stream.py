@@ -18,6 +18,8 @@ import face_recognition
 import numpy as np
 import pickle
 import os
+import signal
+import sys
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -77,26 +79,50 @@ def initialize_detection():
         logger.error(f"Failed to initialize detection: {str(e)}")
         return False
 
-def initialize_camera():
-    """Initialize camera for streaming."""
+def cleanup_camera():
+    """Clean up any existing camera processes."""
     global camera, streaming_active
+    
     try:
-        if camera is None:
-            camera = Picamera2()
-            camera_config = camera.create_preview_configuration()
-            camera_config["main"]["size"] = (640, 480)  # Lower resolution for streaming
-            camera_config["main"]["format"] = "RGB888"
-            camera.configure(camera_config)
-            camera.start()
-            streaming_active = True
-            
-            # Initialize detection systems
-            initialize_detection()
-            
-            logger.info("Camera initialized for streaming with detection")
+        if camera is not None:
+            camera.stop()
+            camera.close()
+            camera = None
+        streaming_active = False
+        logger.info("Camera cleanup completed")
+    except Exception as e:
+        logger.warning(f"Camera cleanup warning: {str(e)}")
+
+def initialize_camera():
+    """Initialize camera for streaming with proper cleanup."""
+    global camera, streaming_active
+    
+    try:
+        # First, try to cleanup any existing camera
+        cleanup_camera()
+        
+        # Wait a moment for cleanup
+        time.sleep(1)
+        
+        # Initialize new camera
+        camera = Picamera2()
+        camera_config = camera.create_preview_configuration()
+        camera_config["main"]["size"] = (640, 480)  # Lower resolution for streaming
+        camera_config["main"]["format"] = "RGB888"
+        camera.configure(camera_config)
+        camera.start()
+        streaming_active = True
+        
+        # Initialize detection systems
+        initialize_detection()
+        
+        logger.info("Camera initialized for streaming with detection")
         return True
     except Exception as e:
         logger.error(f"Failed to initialize camera: {str(e)}")
+        logger.error("This might be because another process is using the camera")
+        logger.error("Try stopping the main app.py first, then run this script")
+        cleanup_camera()
         return False
 
 def detect_motion(frame):
@@ -479,14 +505,26 @@ class StreamHandler(BaseHTTPRequestHandler):
         """Override to reduce log noise."""
         pass
 
+def signal_handler(signum, frame):
+    """Handle shutdown signals gracefully."""
+    logger.info(f"Received signal {signum}, shutting down...")
+    cleanup_camera()
+    sys.exit(0)
+
 def start_server(host='0.0.0.0', port=8080):
     """Start the standalone streaming server."""
-    global streaming_active
+    global streaming_active, camera
+    
+    # Set up signal handlers for graceful shutdown
+    signal.signal(signal.SIGINT, signal_handler)
+    signal.signal(signal.SIGTERM, signal_handler)
     
     try:
         # Initialize camera
         if not initialize_camera():
             logger.error("Failed to initialize camera")
+            logger.error("Make sure no other process is using the camera")
+            logger.error("Try stopping app.py first: pkill -f app.py")
             return False
         
         # Start streaming
@@ -500,20 +538,22 @@ def start_server(host='0.0.0.0', port=8080):
         logger.info(f"📊 Status URL: http://{host}:{port}/status")
         logger.info(f"🌐 Viewer: http://{host}:{port}/")
         logger.info("⚠️  Running in standalone mode - no Firebase/API connectivity")
+        logger.info("Press Ctrl+C to stop the server")
         
         try:
             server.serve_forever()
         except KeyboardInterrupt:
             logger.info("Shutting down server...")
+        finally:
+            # Cleanup
             streaming_active = False
-            if camera is not None:
-                camera.stop()
-                camera = None
+            cleanup_camera()
             server.shutdown()
             logger.info("Server stopped")
             
     except Exception as e:
         logger.error(f"Failed to start server: {str(e)}")
+        cleanup_camera()
         return False
 
 if __name__ == '__main__':

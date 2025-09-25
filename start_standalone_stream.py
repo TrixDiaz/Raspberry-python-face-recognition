@@ -48,12 +48,14 @@ def check_camera():
         camera.configure(camera_config)
         camera.start()
         camera.stop()
+        camera.close()
         camera = None
         logger.info("✅ Camera is available and working")
         return True
     except Exception as e:
         logger.error(f"❌ Camera check failed: {str(e)}")
-        logger.error("Please ensure your camera is connected and working")
+        logger.error("This might be because another process is using the camera")
+        logger.error("Try running: python camera_cleanup.py")
         return False
 
 def check_face_encodings():
@@ -78,6 +80,15 @@ def start_standalone_stream():
         
         # Check camera
         if not check_camera():
+            logger.error("Camera is not available. This might be because:")
+            logger.error("1. Another process is using the camera (like app.py)")
+            logger.error("2. Camera hardware issue")
+            logger.error("3. Camera permissions issue")
+            logger.error("")
+            logger.error("Try these solutions:")
+            logger.error("1. Stop the main app.py: pkill -f app.py")
+            logger.error("2. Run camera cleanup: python camera_cleanup.py")
+            logger.error("3. Check camera hardware: libcamera-hello --list-cameras")
             return False
         
         # Check face encodings
