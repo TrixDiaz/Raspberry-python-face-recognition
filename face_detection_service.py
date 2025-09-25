@@ -173,11 +173,12 @@ def send_motion_detection():
         logger.error(f"Error sending motion detection: {str(e)}")
 
 def send_unknown_face(face_image):
-    """Send unknown face detection to FastAPI backend and store in Firebase."""
+    """Send unknown face detection to Firebase with captured image."""
     global last_unknown_face_report
     
     # Check if Firebase is available
     if not firebase_available or not firebase_service:
+        logger.warning("Firebase service not available for unknown face detection")
         return
     
     current_time = time.time()
@@ -185,22 +186,27 @@ def send_unknown_face(face_image):
         return
     
     try:
+        # Validate face image
+        if face_image is None or face_image.size == 0:
+            logger.error("Invalid face image provided")
+            return
+        
         # Encode face image to base64
         face_image_base64 = firebase_service.encode_image_to_base64(face_image)
         if not face_image_base64:
-            logger.error("Failed to encode face image")
+            logger.error("Failed to encode face image to base64")
             return
         
         # Store directly in Firebase
         success = firebase_service.save_unknown_face(
             face_image_base64=face_image_base64,
             timestamp=datetime.now(),
-            location="raspberry_pi_hardware",
+            location="raspberry_pi_camera",
             confidence=0.8
         )
         
         if success:
-            logger.info("Unknown face saved to Firebase successfully")
+            logger.info("Unknown face with captured image saved to Firebase successfully")
             last_unknown_face_report = current_time
         else:
             logger.warning("Failed to save unknown face to Firebase")
@@ -209,11 +215,12 @@ def send_unknown_face(face_image):
         logger.error(f"Error saving unknown face: {str(e)}")
 
 def send_known_face(face_image, name, confidence):
-    """Send known face detection to Firebase with cooldown."""
+    """Send known face detection to Firebase with captured image."""
     global last_known_face_report
     
     # Check if Firebase is available
     if not firebase_available or not firebase_service:
+        logger.warning("Firebase service not available for known face detection")
         return
     
     current_time = time.time()
@@ -224,10 +231,15 @@ def send_known_face(face_image, name, confidence):
             return
     
     try:
+        # Validate face image
+        if face_image is None or face_image.size == 0:
+            logger.error("Invalid face image provided")
+            return
+        
         # Encode face image to base64
         face_image_base64 = firebase_service.encode_image_to_base64(face_image)
         if not face_image_base64:
-            logger.error("Failed to encode face image")
+            logger.error("Failed to encode face image to base64")
             return
         
         # Store directly in Firebase
@@ -235,12 +247,12 @@ def send_known_face(face_image, name, confidence):
             face_image_base64=face_image_base64,
             name=name,
             timestamp=datetime.now(),
-            location="raspberry_pi_hardware",
+            location="raspberry_pi_camera",
             confidence=confidence
         )
         
         if success:
-            logger.info(f"Known face ({name}) saved to Firebase successfully")
+            logger.info(f"Known face ({name}) with captured image saved to Firebase successfully")
             last_known_face_report[name] = current_time
         else:
             logger.warning(f"Failed to save known face ({name}) to Firebase")
@@ -270,22 +282,27 @@ def detect_motion(frame):
         if area > MOTION_AREA_THRESHOLD:
             motion_detected = True
             if current_time - last_motion_time >= MOTION_COOLDOWN:
-                # Send motion detection to Firebase
+                # Send motion detection to Firebase with captured image
                 if firebase_available and firebase_service:
                     try:
+                        # Capture the current frame as image
                         motion_frame = frame.copy()
-                        motion_base64 = encode_image_to_base64(motion_frame)
-                        success = firebase_service.save_motion_detection(
-                            timestamp=datetime.now(),
-                            location="camera_1",
-                            confidence=area / (frame.shape[0] * frame.shape[1]),
-                            captured_photo=motion_base64
-                        )
-                        if success:
-                            last_motion_time = current_time
-                            logger.info("Motion detection with captured photo sent to Firebase")
+                        motion_base64 = firebase_service.encode_image_to_base64(motion_frame)
+                        
+                        if motion_base64:
+                            success = firebase_service.save_motion_detection(
+                                timestamp=datetime.now(),
+                                location="raspberry_pi_camera",
+                                confidence=min(1.0, area / (frame.shape[0] * frame.shape[1])),
+                                captured_photo=motion_base64
+                            )
+                            if success:
+                                last_motion_time = current_time
+                                logger.info("Motion detection with captured photo sent to Firebase successfully")
+                            else:
+                                logger.warning("Failed to save motion detection to Firebase")
                         else:
-                            logger.warning("Failed to send motion detection to Firebase")
+                            logger.error("Failed to encode motion frame to base64")
                     except Exception as e:
                         logger.error(f"Error sending motion detection: {str(e)}")
             break
